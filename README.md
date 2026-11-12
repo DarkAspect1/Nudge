@@ -12,7 +12,7 @@ The app shows edge pops when you press the volume or power buttons and includes 
 
   ---
   
-- **Custom volume slider:** inspired by a fan-made design that was originally made for Iphones has now become a reality for Androids LOL.
+- **Custom volume slider:** inspired by a concept design that was originally made for Iphones has now become a reality for Androids LOL.
   
   Customize its width, height, position, corners rounding, edge inset, and timeout, with an option for floating. You can turn off the custom slider keeping only the edge pops!
 
