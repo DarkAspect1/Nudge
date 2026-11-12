@@ -6,14 +6,18 @@ The app shows edge pops when you press the volume or power buttons and includes 
 
 ## Features
 
-- Edge pops on volume and power button presses
+- **Edge pops:** on volume and power button presses
   
-  Customize its width, height, Y-axis position, and timeout for each button
+  Customize its width, height, position, and timeout for each button
+
+  ---
   
-- Custom volume slider inspired by a fan-made design that was originally made for Iphones has now become a reality for Androids LOL.
+- **Custom volume slider:** inspired by a fan-made design that was originally made for Iphones has now become a reality for Androids LOL.
   
-  Customize its width, height, Y-axis position, corners rounding, edge inset (how far it is from the bezzels) and timeout, with an option for floating. You can turn off the custom slider keeping only the edge pops!
-  
+  Customize its width, height, position, corners rounding, edge inset, and timeout, with an option for floating. You can turn off the custom slider keeping only the edge pops!
+
+  ---
+
 - Choose which side you want to place the Edge pops and the custom slider
   
   Both can be in separate sides, with an option to change custom slider placement in landscape mode
