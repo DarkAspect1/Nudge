@@ -2,6 +2,8 @@
 
 The app shows edge pops when you press the volume or power buttons and includes a volume slider based on a concept design that has now become a reality.
 
+[![Add to Obtainium](https://img.shields.io/badge/Get_it_on-Obtainium-4B0082?style=for-the-badge&logo=android&logoColor=white)](https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/<DarkAspect1>/Nudge)
+
 ![Nudge](assets/Nudge.jpg)
 
 ## Features
