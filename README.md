@@ -1,6 +1,6 @@
 # Nudge
 
-The app shows edge pops when you press the volume or power buttons and includes a volume slider based on a fan-made concept that has now become a reality.
+The app shows edge pops when you press the volume or power buttons and includes a volume slider based on a concept design that has now become a reality.
 
 ![Nudge](assets/Nudge.jpg)
 
