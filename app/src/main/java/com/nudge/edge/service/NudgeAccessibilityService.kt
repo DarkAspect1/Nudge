@@ -807,14 +807,7 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     private fun schedulePopRetract(isUp: Boolean, settings: NudgeSettings) {
-        val isLandscape = EdgeOrientationMapper.isLandscapeRotation(rotationState.value)
-        val hudAllowed = EdgeOrientationMapper.shouldShowSliderHud(isLandscape, settings)
-        val lingerMs = when {
-            settings.hudTriggerMode == HudTriggerMode.SWIPE_FROM_POP &&
-                hudAllowed &&
-                !hudActive.value -> maxOf(settings.popAutoHideMs, 1300L)
-            else -> settings.popAutoHideMs
-        }
+        val lingerMs = settings.popAutoHideMs
         if (isUp) {
             upRetractJob?.cancel()
             upRetractJob = serviceScope.launch {

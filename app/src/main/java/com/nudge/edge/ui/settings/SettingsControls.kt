@@ -1284,12 +1284,12 @@ private fun TriggerModeSelectorCard(
             TriggerOptionRow(
                 selected = selectedMode == HudTriggerMode.SIMULTANEOUS,
                 title = "Simultaneous with Edge Pop",
-                description = "Show slider HUD immediately on press",
+                description = "Show slider HUD immediately",
                 onClick = { onModeSelected(HudTriggerMode.SIMULTANEOUS) }
             )
             TriggerOptionRow(
                 selected = selectedMode == HudTriggerMode.SECOND_PRESS,
-                title = "Second Consecutive Press",
+                title = "Second Press",
                 description = "First press pops; second opens HUD",
                 onClick = { onModeSelected(HudTriggerMode.SECOND_PRESS) }
             )
@@ -1343,10 +1343,7 @@ private fun TriggerOptionRow(
                 Text(
                     text = description,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    softWrap = false,
-                    overflow = TextOverflow.Ellipsis
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
