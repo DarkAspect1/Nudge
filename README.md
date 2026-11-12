@@ -24,7 +24,7 @@ The app shows edge pops when you press the volume or power buttons and includes 
 
 - Press/long press the sound icon when custom slider is open and it opens the audio mixer
 
-  Control Music, Ring, Notification, and Alarm sounds separately
+  Control Media, Ring, Notification, and Alarm sounds separately
   
 - Both Edge pops and Custom slider can be turned off for landscape mode
 - Want haptics too? there's an option for that
