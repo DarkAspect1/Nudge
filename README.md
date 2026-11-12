@@ -45,7 +45,7 @@ The app shows edge pops when you press the volume or power buttons and includes 
 
 - **Method 1: Pause Play Protect:** Open Google Play Store, tap your Profile Icon (top right), Choose Play Protect, tab the Settings icon (top right) and Toggle OFF "Scan apps with Play Protect" and tap Pause. Install Nudge apk.
 - **Method 2: Install Using Obtainium:** Click the badge on top to add the repo and install the app
-- **Method 3: ADB/Shizuku:** run "adb install nudge.apk" or using custom installers like InstallerX Revived.
+- **Method 3: ADB/Shizuku:** run "adb install nudge.apk" or using 3rd-party installers like InstallerX Revived.
 
 #### Accessibility denied?
 
