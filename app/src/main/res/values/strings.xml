@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nudge</string>
+    <string name="accessibility_service_summary">Bezel-blended edge volume pop and slider HUD</string>
+    <string name="accessibility_service_description">Nudge listens exclusively to hardware volume button presses to display your custom bezel-blended edge pop and volume slider HUD without reading screen content.</string>
+</resources>

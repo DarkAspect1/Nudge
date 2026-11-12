@@ -1,0 +1,2 @@
+-keepattributes *Annotation*
+-keepclassmembers class com.nudge.edge.** { *; }
