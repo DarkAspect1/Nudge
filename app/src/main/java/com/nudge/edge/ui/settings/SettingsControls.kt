@@ -1,4 +1,4 @@
-﻿package com.nudge.edge.ui.settings
+package com.nudge.edge.ui.settings
 
 import android.content.Context
 import android.content.Intent
@@ -2033,7 +2033,7 @@ fun SystemTab(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Shizuku Watchdog",
+                                text = "Permissions Watchdog",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold
                             )
