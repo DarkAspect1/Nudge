@@ -46,4 +46,5 @@ The app shows edge pops when you press the volume or power buttons, volume slide
 - **Method 2: Automatically via Shizuku in-app**
   
  ## Two variants of the app
-- Online Variant has internet permission and shows app updates and checks for them in selected periods or manually and provides in-app updates, while Offline version doesnt show updates at all and doesnt have internet permission
+- Online Variant has internet permission and shows app updates and checks for them in selected periods or manually and provides in-app updates.
+- Offline version doesnt show updates at all and doesnt have internet permission
