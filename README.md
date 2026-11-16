@@ -8,7 +8,7 @@ The app shows edge pops when you press the volume or power buttons and includes 
   </a>
 </p>
 
-![Nudge](assets/Nudge.jpg)
+![Nudge](assets/Nudge.png)
 
 ## Features
 
