@@ -47,6 +47,7 @@ The app shows edge pops when you press the volume or power buttons and includes 
 - **Method 2: Install Using Obtainium:** Click the badge on top to add the repo and install the app
 - **Method 3: ADB/Shizuku:** run "adb install nudge.apk" or using 3rd-party installers like InstallerX Revived.
 
-#### Accessibility denied?
+### Accessibility denied?
 
-Users on Android 13+ after installing, go to Settings, Apps, Nudge, 3 dots menu on top right corner (⋮), Allow restricted settings so the accessibility toggle isn't grayed out for the app. now go back to accessibility page and enable it.
+- **Method 1: Manually:** Users on Android 13+ after installing, go to Settings, Apps, Nudge, 3 dots menu on top right corner (⋮), Allow restricted settings so the accessibility toggle isn't grayed out for the app. now go back to accessibility page and enable it.
+- **Method 2: Automatically via Shizuku:** the upcoming release "2.0" will have shizuku support with auto grant permissions option
