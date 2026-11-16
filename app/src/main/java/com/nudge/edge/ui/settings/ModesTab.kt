@@ -1,0 +1,2125 @@
+package com.nudge.edge.ui.settings
+
+import android.Manifest
+import android.app.NotificationManager
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.automirrored.rounded.Launch
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.nudge.edge.data.SettingsRepository
+import com.nudge.edge.model.BezelEdge
+import com.nudge.edge.model.CustomMode
+import com.nudge.edge.model.DndModeType
+import com.nudge.edge.model.HardwareTrigger
+import com.nudge.edge.model.LivePreviewController
+import com.nudge.edge.model.NudgeIcons
+import com.nudge.edge.model.NudgeSettings
+import com.nudge.edge.service.NudgeAccessibilityService
+import com.nudge.edge.service.ShizukuManager
+import com.nudge.edge.model.PreviewTarget
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.UUID
+import kotlin.math.roundToInt
+
+@Composable
+fun ModesTab(
+    settings: NudgeSettings,
+    repository: SettingsRepository,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var editingMode by remember { mutableStateOf<CustomMode?>(null) }
+    var isAddingNewMode by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+
+        ModesPermissionsHeader(context = context, settings = settings, repository = repository)
+
+        DndPanelCard(settings = settings, repository = repository)
+
+        ActionsPanelCard(
+            settings = settings,
+            repository = repository,
+            onAddMode = { isAddingNewMode = true },
+            onEditMode = { editingMode = it },
+            onDeleteMode = { repository.deleteCustomMode(it.id) },
+            onMoveUp = { index -> repository.reorderCustomMode(index, index - 1) },
+            onMoveDown = { index -> repository.reorderCustomMode(index, index + 1) }
+        )
+    }
+
+    if (isAddingNewMode) {
+        EditCustomModeDialog(
+            mode = null,
+            onDismiss = { isAddingNewMode = false },
+            onSave = { newMode ->
+                repository.addCustomMode(newMode)
+                isAddingNewMode = false
+            }
+        )
+    }
+
+    editingMode?.let { mode ->
+        EditCustomModeDialog(
+            mode = mode,
+            onDismiss = { editingMode = null },
+            onSave = { updated ->
+                repository.updateCustomMode(updated)
+                editingMode = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun ModesPermissionsHeader(
+    context: Context,
+    settings: NudgeSettings,
+    repository: SettingsRepository
+) {
+    val notifManager = remember(context) {
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    }
+
+    var hasDndPermission by remember(context) {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                notifManager.isNotificationPolicyAccessGranted
+            } else true
+        )
+    }
+
+    var hasPostNotifPermission by remember(context) {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+            } else true
+        )
+    }
+
+    var isAssistantConfigured by remember(context, settings.powerAssistantConfigured) {
+        val assistantSetting = Settings.Secure.getString(context.contentResolver, "assistant")
+        mutableStateOf(assistantSetting?.contains(context.packageName) == true || settings.powerAssistantConfigured)
+    }
+
+    val postNotifLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasPostNotifPermission = isGranted
+    }
+
+    val coroutineScope = rememberCoroutineScope()
+
+    fun refreshPermissions() {
+        hasDndPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            notifManager.isNotificationPolicyAccessGranted
+        } else true
+        hasPostNotifPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        } else true
+        val assistantSetting = Settings.Secure.getString(context.contentResolver, "assistant") ?: ""
+        val voiceServiceSetting = Settings.Secure.getString(context.contentResolver, "voice_interaction_service") ?: ""
+        isAssistantConfigured = assistantSetting.contains(context.packageName) || voiceServiceSetting.contains(context.packageName)
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshPermissions()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Tune,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = "Permissions",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        PermissionItemCard(
+            title = "Do Not Disturb Access",
+            isGranted = hasDndPermission,
+            grantedText = "Granted",
+            deniedText = "Denied",
+            description = "Required to switch DND & Silent ringer modes without system interruption.",
+            buttonText = if (hasDndPermission) "Manage in Settings" else "Grant Permission",
+            onClick = {
+                val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            },
+            onAutoGrantClick = {
+                ShizukuManager.grantDndAccessOnlyViaShizuku(context) {
+                    coroutineScope.launch {
+                        repeat(5) {
+                            refreshPermissions()
+                            delay(100L)
+                        }
+                    }
+                }
+            }
+        )
+
+        PermissionItemCard(
+            title = "Notification Bridge",
+            isGranted = hasPostNotifPermission,
+            grantedText = "Granted",
+            deniedText = "Denied",
+            description = "Required for Automation / Routines silent notification bridge.",
+            buttonText = if (hasPostNotifPermission) "Permission Granted" else "Grant Permission",
+            onClick = {
+                if (!hasPostNotifPermission && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    postNotifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    runCatching { context.startActivity(intent) }
+                }
+            },
+            onAutoGrantClick = {
+                ShizukuManager.grantNotificationsOnlyViaShizuku(context) {
+                    coroutineScope.launch {
+                        repeat(5) {
+                            refreshPermissions()
+                            delay(100L)
+                        }
+                    }
+                }
+            }
+        )
+
+        PermissionItemCard(
+            title = "Hold Power Button Trigger",
+            isGranted = isAssistantConfigured,
+            grantedText = "Configured",
+            deniedText = "Not Configured",
+            description = "Assign Nudge as Digital Assistant to trigger overlays on Long-Press Power.",
+            buttonText = if (isAssistantConfigured) "Configure Assistant" else "Set Up Assistant",
+            onClick = {
+                val intent = Intent(Settings.ACTION_VOICE_INPUT_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                val launched = runCatching {
+                    context.startActivity(intent)
+                    true
+                }.getOrDefault(false)
+                if (!launched) {
+                    val fallbackIntent = Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    runCatching { context.startActivity(fallbackIntent) }
+                }
+            },
+            onAutoGrantClick = {
+                ShizukuManager.grantPowerTriggerOnlyViaShizuku(context) {
+                    repository.setPowerAssistantConfigured(true)
+                    coroutineScope.launch {
+                        repeat(5) {
+                            refreshPermissions()
+                            delay(100L)
+                        }
+                    }
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun PermissionItemCard(
+    title: String,
+    isGranted: Boolean,
+    grantedText: String,
+    deniedText: String,
+    description: String,
+    buttonText: String,
+    onClick: () -> Unit,
+    onAutoGrantClick: (() -> Unit)? = null
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Surface(
+                    shape = CircleShape,
+                    color = if (isGranted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
+                ) {
+                    Text(
+                        text = if (isGranted) grantedText else deniedText,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isGranted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (!isGranted && onAutoGrantClick != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilledTonalButton(
+                        onClick = onClick,
+                        modifier = Modifier.weight(1f),
+                        shape = CircleShape
+                    ) {
+                        Text(
+                            text = buttonText,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    FilledTonalButton(
+                        onClick = onAutoGrantClick,
+                        modifier = Modifier.weight(1f),
+                        shape = CircleShape
+                    ) {
+                        Text(
+                            text = "Auto-Grant",
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            } else {
+                FilledTonalButton(
+                    onClick = onClick,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = CircleShape
+                ) {
+                    Text(
+                        text = buttonText,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DndPanelCard(
+    settings: NudgeSettings,
+    repository: SettingsRepository
+) {
+    var isScanningCustomButton by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "DND / Silent Panel",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Two-state toggle for Silent/Ring or DND",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = settings.enableDndToggle,
+                    onCheckedChange = repository::setEnableDndToggle
+                )
+            }
+
+            AnimatedVisibility(
+                visible = settings.enableDndToggle,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Toggle Mode Type",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            DndModeType.entries.forEach { mode ->
+                                val selected = settings.dndModeType == mode
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { repository.setDndModeType(mode) },
+                                    shape = CircleShape,
+                                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
+                                ) {
+                                    Text(
+                                        text = mode.displayName,
+                                        modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    HardwareTriggerSelector(
+                        title = "Hardware Trigger Button",
+                        selectedTrigger = settings.dndTrigger,
+                        onTriggerSelected = { trigger ->
+                            repository.setDndTrigger(trigger)
+                            if (trigger == HardwareTrigger.CUSTOM_BTN_SINGLE ||
+                                trigger == HardwareTrigger.CUSTOM_BTN_DOUBLE ||
+                                trigger == HardwareTrigger.CUSTOM_BTN_LONG
+                            ) {
+                                isScanningCustomButton = true
+                            }
+                        }
+                    )
+
+                    if (settings.dndTrigger == HardwareTrigger.BOTH_VOLUME_SHORT) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            SliderRow(
+                                title = "Simultaneous Press Timeout",
+                                valueLabel = "${settings.simultaneousPressTimeoutMs} ms",
+                                value = settings.simultaneousPressTimeoutMs.toFloat(),
+                                valueRange = 1f..500f,
+                                onValueChange = {
+                                    val v = it.roundToInt().toLong()
+                                    repository.setSimultaneousPressTimeoutMs(v)
+                                    LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL)
+                                    repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                                },
+                                onStepDown = {
+                                    val v = (settings.simultaneousPressTimeoutMs - 5L).coerceAtLeast(1L)
+                                    repository.setSimultaneousPressTimeoutMs(v)
+                                    LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL)
+                                    LivePreviewController.onSliderRelease(800L)
+                                    repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                                },
+                                onStepUp = {
+                                    val v = (settings.simultaneousPressTimeoutMs + 5L).coerceAtMost(500L)
+                                    repository.setSimultaneousPressTimeoutMs(v)
+                                    LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL)
+                                    LivePreviewController.onSliderRelease(800L)
+                                    repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                                },
+                                onValueChangeFinished = {
+                                    LivePreviewController.onSliderRelease(800L)
+                                    repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 800L)
+                                }
+                            )
+                            Text(
+                                text = "Warning: A higher timeout prevents misfires when pressing both buttons, but delays single volume steps when all panels are closed.",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    if (settings.dndTrigger == HardwareTrigger.DOUBLE_TAP_VOL_UP || settings.dndTrigger == HardwareTrigger.DOUBLE_TAP_VOL_DOWN) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            SliderRow(
+                                title = "Double-Press Timeout",
+                                valueLabel = "${settings.dndDoubleTapTimeoutMs} ms",
+                                value = settings.dndDoubleTapTimeoutMs.toFloat(),
+                                valueRange = 1f..500f,
+                                onValueChange = {
+                                    val v = it.roundToInt().toLong()
+                                    repository.setDndDoubleTapTimeoutMs(v)
+                                    LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL)
+                                    repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                                },
+                                onStepDown = {
+                                    val v = (settings.dndDoubleTapTimeoutMs - 10L).coerceAtLeast(1L)
+                                    repository.setDndDoubleTapTimeoutMs(v)
+                                    LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL)
+                                    LivePreviewController.onSliderRelease(800L)
+                                    repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                                },
+                                onStepUp = {
+                                    val v = (settings.dndDoubleTapTimeoutMs + 10L).coerceAtMost(500L)
+                                    repository.setDndDoubleTapTimeoutMs(v)
+                                    LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL)
+                                    LivePreviewController.onSliderRelease(800L)
+                                    repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                                },
+                                onValueChangeFinished = {
+                                    LivePreviewController.onSliderRelease(800L)
+                                    repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 800L)
+                                }
+                            )
+                            Text(
+                                text = "Warning: The volume slider waits for this timeout before showing when double-press is enabled.",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    SliderRow(
+                        title = "Panel Timeout",
+                        valueLabel = "${settings.dndTimeoutMs} ms",
+                        value = settings.dndTimeoutMs.toFloat(),
+                        valueRange = 500f..4000f,
+                        onValueChange = {
+                            val v = it.roundToInt().toLong()
+                            repository.setDndTimeoutMs(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onStepDown = {
+                            val v = (settings.dndTimeoutMs - 100L).coerceAtLeast(500L)
+                            repository.setDndTimeoutMs(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL)
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onStepUp = {
+                            val v = (settings.dndTimeoutMs + 100L).coerceAtMost(4000L)
+                            repository.setDndTimeoutMs(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL)
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onValueChangeFinished = {
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 800L)
+                        }
+                    )
+
+                    SideSelectorRow(
+                        title = "Portrait Side",
+                        selectedEdge = settings.dndPortraitEdge,
+                        availableEdges = listOf(BezelEdge.LEFT, BezelEdge.RIGHT),
+                        onEdgeSelected = { edge ->
+                            repository.setDndPortraitEdge(edge)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL, isLandscape = false)
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        }
+                    )
+
+                    SliderRow(
+                        title = "Portrait Position Offset",
+                        valueLabel = "${(settings.dndPortraitOffsetPercent * 100f).roundToInt()}%",
+                        value = settings.dndPortraitOffsetPercent * 100f,
+                        valueRange = 10f..90f,
+                        onValueChange = { pct ->
+                            val frac = (pct / 100f).coerceIn(0.10f, 0.90f)
+                            repository.setDndPortraitOffset(frac)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL, isLandscape = false) { s ->
+                                s.copy(overrideOffsetPercent = frac * 100f)
+                            }
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onStepDown = {
+                            val v = (settings.dndPortraitOffsetPercent - 0.01f).coerceIn(0.10f, 0.90f)
+                            repository.setDndPortraitOffset(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL, isLandscape = false) { s ->
+                                s.copy(overrideOffsetPercent = v * 100f)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onStepUp = {
+                            val v = (settings.dndPortraitOffsetPercent + 0.01f).coerceIn(0.10f, 0.90f)
+                            repository.setDndPortraitOffset(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL, isLandscape = false) { s ->
+                                s.copy(overrideOffsetPercent = v * 100f)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onValueChangeFinished = { finalVal ->
+                            repository.setDndPortraitOffset((finalVal / 100f).coerceIn(0.10f, 0.90f))
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 800L)
+                        }
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Enable in Landscape",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Switch(
+                            checked = settings.dndEnableLandscape,
+                            onCheckedChange = repository::setDndEnableLandscape
+                        )
+                    }
+
+                    if (settings.dndEnableLandscape) {
+                        SideSelectorRow(
+                            title = "Landscape Side",
+                            selectedEdge = settings.dndLandscapeEdge,
+                            availableEdges = BezelEdge.entries,
+                            onEdgeSelected = { edge ->
+                                repository.setDndLandscapeEdge(edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL, isLandscape = true)
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.DND_PANEL, forceLandscape = true, durationMs = 1500L)
+                            }
+                        )
+
+                        SliderRow(
+                            title = "Landscape Position Offset",
+                            valueLabel = "${(settings.dndLandscapeOffsetPercent * 100f).roundToInt()}%",
+                            value = settings.dndLandscapeOffsetPercent * 100f,
+                            valueRange = 10f..90f,
+                            onValueChange = { pct ->
+                                val frac = (pct / 100f).coerceIn(0.10f, 0.90f)
+                                repository.setDndLandscapeOffset(frac)
+                                LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL, isLandscape = true) { s ->
+                                    s.copy(overrideOffsetPercent = frac * 100f)
+                                }
+                                repository.requestLivePreview(PreviewTarget.DND_PANEL, forceLandscape = true, durationMs = 1500L)
+                            },
+                            onStepDown = {
+                                val v = (settings.dndLandscapeOffsetPercent - 0.01f).coerceIn(0.10f, 0.90f)
+                                repository.setDndLandscapeOffset(v)
+                                LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL, isLandscape = true) { s ->
+                                    s.copy(overrideOffsetPercent = v * 100f)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.DND_PANEL, forceLandscape = true, durationMs = 1500L)
+                            },
+                            onStepUp = {
+                                val v = (settings.dndLandscapeOffsetPercent + 0.01f).coerceIn(0.10f, 0.90f)
+                                repository.setDndLandscapeOffset(v)
+                                LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL, isLandscape = true) { s ->
+                                    s.copy(overrideOffsetPercent = v * 100f)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.DND_PANEL, forceLandscape = true, durationMs = 1500L)
+                            },
+                            onValueChangeFinished = { finalVal ->
+                                repository.setDndLandscapeOffset((finalVal / 100f).coerceIn(0.10f, 0.90f))
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.DND_PANEL, forceLandscape = true, durationMs = 800L)
+                            }
+                        )
+                    }
+
+                    SliderRow(
+                        title = "Pill Width",
+                        valueLabel = "${settings.dndThicknessDp.roundToInt()} dp",
+                        value = settings.dndThicknessDp,
+                        valueRange = NudgeSettings.MIN_BEZEL_THICKNESS_DP..NudgeSettings.MAX_BEZEL_THICKNESS_DP,
+                        onValueChange = { v ->
+                            val snapped = v.roundToInt().toFloat()
+                            repository.setDndThicknessDp(snapped)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL) { s ->
+                                s.copy(overrideWidthDp = snapped)
+                            }
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onStepDown = {
+                            val v = (settings.dndThicknessDp - 1f).coerceIn(NudgeSettings.MIN_BEZEL_THICKNESS_DP, NudgeSettings.MAX_BEZEL_THICKNESS_DP)
+                            repository.setDndThicknessDp(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL) { s ->
+                                s.copy(overrideWidthDp = v)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onStepUp = {
+                            val v = (settings.dndThicknessDp + 1f).coerceIn(NudgeSettings.MIN_BEZEL_THICKNESS_DP, NudgeSettings.MAX_BEZEL_THICKNESS_DP)
+                            repository.setDndThicknessDp(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL) { s ->
+                                s.copy(overrideWidthDp = v)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onValueChangeFinished = { finalVal ->
+                            repository.setDndThicknessDp(finalVal.roundToInt().toFloat())
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 800L)
+                        }
+                    )
+
+                    SliderRow(
+                        title = "Pill Height",
+                        valueLabel = "${settings.dndLengthDp.roundToInt()} dp",
+                        value = settings.dndLengthDp,
+                        valueRange = 40f..240f,
+                        onValueChange = { v ->
+                            val snapped = v.roundToInt().toFloat()
+                            repository.setDndLengthDp(snapped)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL) { s ->
+                                s.copy(overrideHeightDp = snapped)
+                            }
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onStepDown = {
+                            val v = (settings.dndLengthDp - 1f).coerceIn(40f, 240f)
+                            repository.setDndLengthDp(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL) { s ->
+                                s.copy(overrideHeightDp = v)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onStepUp = {
+                            val v = (settings.dndLengthDp + 1f).coerceIn(40f, 240f)
+                            repository.setDndLengthDp(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL) { s ->
+                                s.copy(overrideHeightDp = v)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onValueChangeFinished = { finalVal ->
+                            repository.setDndLengthDp(finalVal.roundToInt().toFloat())
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 800L)
+                        }
+                    )
+
+                    SliderRow(
+                        title = "Unfocused Icon Placement",
+                        valueLabel = "${settings.dndUnfocusedOffsetDp.roundToInt()} dp",
+                        value = settings.dndUnfocusedOffsetDp,
+                        valueRange = 14f..90f,
+                        onValueChange = { v ->
+                            val snapped = v.roundToInt().toFloat()
+                            repository.setDndUnfocusedOffsetDp(snapped)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL) { s ->
+                                s.copy(overrideUnfocusedOffsetDp = snapped)
+                            }
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onStepDown = {
+                            val v = (settings.dndUnfocusedOffsetDp - 1f).coerceIn(14f, 90f)
+                            repository.setDndUnfocusedOffsetDp(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL) { s ->
+                                s.copy(overrideUnfocusedOffsetDp = v)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onStepUp = {
+                            val v = (settings.dndUnfocusedOffsetDp + 1f).coerceIn(14f, 90f)
+                            repository.setDndUnfocusedOffsetDp(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.DND_PANEL) { s ->
+                                s.copy(overrideUnfocusedOffsetDp = v)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 1500L)
+                        },
+                        onValueChangeFinished = { finalVal ->
+                            repository.setDndUnfocusedOffsetDp(finalVal.roundToInt().toFloat())
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.DND_PANEL, durationMs = 800L)
+                        }
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Show Labels",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Switch(
+                            checked = settings.showDndLabel,
+                            onCheckedChange = repository::setShowDndLabel
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (isScanningCustomButton) {
+        CustomButtonScannerDialog(
+            currentButtonLabel = settings.customButtonLabel,
+            onDismiss = { isScanningCustomButton = false },
+            onButtonDetected = { keyCode, scanCode, label ->
+                repository.setCustomHardwareButton(keyCode, scanCode, label)
+                isScanningCustomButton = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun ActionsPanelCard(
+    settings: NudgeSettings,
+    repository: SettingsRepository,
+    onAddMode: () -> Unit,
+    onEditMode: (CustomMode) -> Unit,
+    onDeleteMode: (CustomMode) -> Unit,
+    onMoveUp: (Int) -> Unit,
+    onMoveDown: (Int) -> Unit
+) {
+    var isScanningCustomButton by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Column {
+                Text(
+                    text = "Modes/Actions Panel",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Use with Automation / Routines",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            HowToUseActionsCard()
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Enable Actions Panel",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Switch(
+                    checked = settings.enableActionsPanel,
+                    onCheckedChange = repository::setEnableActionsPanel
+                )
+            }
+
+            AnimatedVisibility(
+                visible = settings.enableActionsPanel,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+
+                    HardwareTriggerSelector(
+                        title = "Hardware Trigger Button",
+                        selectedTrigger = settings.modesTrigger,
+                        onTriggerSelected = { trigger ->
+                            repository.setModesTrigger(trigger)
+                            if (trigger == HardwareTrigger.CUSTOM_BTN_SINGLE ||
+                                trigger == HardwareTrigger.CUSTOM_BTN_DOUBLE ||
+                                trigger == HardwareTrigger.CUSTOM_BTN_LONG
+                            ) {
+                                isScanningCustomButton = true
+                            }
+                        }
+                    )
+
+                    if (settings.modesTrigger == HardwareTrigger.BOTH_VOLUME_SHORT) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            SliderRow(
+                                title = "Simultaneous Press Timeout",
+                                valueLabel = "${settings.simultaneousPressTimeoutMs} ms",
+                                value = settings.simultaneousPressTimeoutMs.toFloat(),
+                                valueRange = 1f..500f,
+                                onValueChange = {
+                                    val v = it.roundToInt().toLong()
+                                    repository.setSimultaneousPressTimeoutMs(v)
+                                    LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL)
+                                    repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                                },
+                                onStepDown = {
+                                    val v = (settings.simultaneousPressTimeoutMs - 5L).coerceAtLeast(1L)
+                                    repository.setSimultaneousPressTimeoutMs(v)
+                                    LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL)
+                                    LivePreviewController.onSliderRelease(800L)
+                                    repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                                },
+                                onStepUp = {
+                                    val v = (settings.simultaneousPressTimeoutMs + 5L).coerceAtMost(500L)
+                                    repository.setSimultaneousPressTimeoutMs(v)
+                                    LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL)
+                                    LivePreviewController.onSliderRelease(800L)
+                                    repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                                },
+                                onValueChangeFinished = {
+                                    LivePreviewController.onSliderRelease(800L)
+                                    repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 800L)
+                                }
+                            )
+                            Text(
+                                text = "Warning: A higher timeout prevents misfires when pressing both buttons, but delays single volume steps when all panels are closed.",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    if (settings.modesTrigger == HardwareTrigger.DOUBLE_TAP_VOL_UP || settings.modesTrigger == HardwareTrigger.DOUBLE_TAP_VOL_DOWN) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            SliderRow(
+                                title = "Double-Press Timeout",
+                                valueLabel = "${settings.modesDoubleTapTimeoutMs} ms",
+                                value = settings.modesDoubleTapTimeoutMs.toFloat(),
+                                valueRange = 1f..500f,
+                                onValueChange = {
+                                    val v = it.roundToInt().toLong()
+                                    repository.setModesDoubleTapTimeoutMs(v)
+                                    LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL)
+                                    repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                                },
+                                onStepDown = {
+                                    val v = (settings.modesDoubleTapTimeoutMs - 10L).coerceAtLeast(1L)
+                                    repository.setModesDoubleTapTimeoutMs(v)
+                                    LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL)
+                                    LivePreviewController.onSliderRelease(800L)
+                                    repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                                },
+                                onStepUp = {
+                                    val v = (settings.modesDoubleTapTimeoutMs + 10L).coerceAtMost(500L)
+                                    repository.setModesDoubleTapTimeoutMs(v)
+                                    LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL)
+                                    LivePreviewController.onSliderRelease(800L)
+                                    repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                                },
+                                onValueChangeFinished = {
+                                    LivePreviewController.onSliderRelease(800L)
+                                    repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 800L)
+                                }
+                            )
+                            Text(
+                                text = "Warning: The volume slider waits for this timeout before showing when double-press is enabled.",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    SliderRow(
+                        title = "Actions Timeout",
+                        valueLabel = "${settings.modesTimeoutMs} ms",
+                        value = settings.modesTimeoutMs.toFloat(),
+                        valueRange = 800f..5000f,
+                        onValueChange = {
+                            val v = it.roundToInt().toLong()
+                            repository.setModesTimeoutMs(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        },
+                        onStepDown = {
+                            val v = (settings.modesTimeoutMs - 100L).coerceAtLeast(800L)
+                            repository.setModesTimeoutMs(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL)
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        },
+                        onStepUp = {
+                            val v = (settings.modesTimeoutMs + 100L).coerceAtMost(5000L)
+                            repository.setModesTimeoutMs(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL)
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        },
+                        onValueChangeFinished = {
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 800L)
+                        }
+                    )
+
+                    SideSelectorRow(
+                        title = "Portrait Side",
+                        selectedEdge = settings.modesPortraitEdge,
+                        availableEdges = listOf(BezelEdge.LEFT, BezelEdge.RIGHT),
+                        onEdgeSelected = { edge ->
+                            repository.setModesPortraitEdge(edge)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL, isLandscape = false)
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        }
+                    )
+
+                    SliderRow(
+                        title = "Portrait Position Offset",
+                        valueLabel = "${(settings.modesPortraitOffsetPercent * 100f).roundToInt()}%",
+                        value = settings.modesPortraitOffsetPercent * 100f,
+                        valueRange = 10f..90f,
+                        onValueChange = { pct ->
+                            val frac = (pct / 100f).coerceIn(0.10f, 0.90f)
+                            repository.setModesPortraitOffset(frac)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL, isLandscape = false) { s ->
+                                s.copy(overrideOffsetPercent = frac * 100f)
+                            }
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        },
+                        onStepDown = {
+                            val v = (settings.modesPortraitOffsetPercent - 0.01f).coerceIn(0.10f, 0.90f)
+                            repository.setModesPortraitOffset(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL, isLandscape = false) { s ->
+                                s.copy(overrideOffsetPercent = v * 100f)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        },
+                        onStepUp = {
+                            val v = (settings.modesPortraitOffsetPercent + 0.01f).coerceIn(0.10f, 0.90f)
+                            repository.setModesPortraitOffset(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL, isLandscape = false) { s ->
+                                s.copy(overrideOffsetPercent = v * 100f)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        },
+                        onValueChangeFinished = { finalVal ->
+                            repository.setModesPortraitOffset((finalVal / 100f).coerceIn(0.10f, 0.90f))
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 800L)
+                        }
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Enable in Landscape",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Switch(
+                            checked = settings.modesEnableLandscape,
+                            onCheckedChange = repository::setModesEnableLandscape
+                        )
+                    }
+
+                    if (settings.modesEnableLandscape) {
+                        SideSelectorRow(
+                            title = "Landscape Side",
+                            selectedEdge = settings.modesLandscapeEdge,
+                            availableEdges = BezelEdge.entries,
+                            onEdgeSelected = { edge ->
+                                repository.setModesLandscapeEdge(edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL, isLandscape = true)
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, forceLandscape = true, durationMs = 1500L)
+                            }
+                        )
+
+                        SliderRow(
+                            title = "Landscape Position Offset",
+                            valueLabel = "${(settings.modesLandscapeOffsetPercent * 100f).roundToInt()}%",
+                            value = settings.modesLandscapeOffsetPercent * 100f,
+                            valueRange = 10f..90f,
+                            onValueChange = { pct ->
+                                val frac = (pct / 100f).coerceIn(0.10f, 0.90f)
+                                repository.setModesLandscapeOffset(frac)
+                                LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL, isLandscape = true) { s ->
+                                    s.copy(overrideOffsetPercent = frac * 100f)
+                                }
+                                repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, forceLandscape = true, durationMs = 1500L)
+                            },
+                            onStepDown = {
+                                val v = (settings.modesLandscapeOffsetPercent - 0.01f).coerceIn(0.10f, 0.90f)
+                                repository.setModesLandscapeOffset(v)
+                                LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL, isLandscape = true) { s ->
+                                    s.copy(overrideOffsetPercent = v * 100f)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, forceLandscape = true, durationMs = 1500L)
+                            },
+                            onStepUp = {
+                                val v = (settings.modesLandscapeOffsetPercent + 0.01f).coerceIn(0.10f, 0.90f)
+                                repository.setModesLandscapeOffset(v)
+                                LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL, isLandscape = true) { s ->
+                                    s.copy(overrideOffsetPercent = v * 100f)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, forceLandscape = true, durationMs = 1500L)
+                            },
+                            onValueChangeFinished = { finalVal ->
+                                repository.setModesLandscapeOffset((finalVal / 100f).coerceIn(0.10f, 0.90f))
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, forceLandscape = true, durationMs = 800L)
+                            }
+                        )
+                    }
+
+                    SliderRow(
+                        title = "Pill Width",
+                        valueLabel = "${settings.modesThicknessDp.roundToInt()} dp",
+                        value = settings.modesThicknessDp,
+                        valueRange = NudgeSettings.MIN_BEZEL_THICKNESS_DP..NudgeSettings.MAX_BEZEL_THICKNESS_DP,
+                        onValueChange = { v ->
+                            val snapped = v.roundToInt().toFloat()
+                            repository.setModesThicknessDp(snapped)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL) { s ->
+                                s.copy(overrideWidthDp = snapped)
+                            }
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        },
+                        onStepDown = {
+                            val v = (settings.modesThicknessDp - 1f).coerceIn(NudgeSettings.MIN_BEZEL_THICKNESS_DP, NudgeSettings.MAX_BEZEL_THICKNESS_DP)
+                            repository.setModesThicknessDp(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL) { s ->
+                                s.copy(overrideWidthDp = v)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        },
+                        onStepUp = {
+                            val v = (settings.modesThicknessDp + 1f).coerceIn(NudgeSettings.MIN_BEZEL_THICKNESS_DP, NudgeSettings.MAX_BEZEL_THICKNESS_DP)
+                            repository.setModesThicknessDp(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL) { s ->
+                                s.copy(overrideWidthDp = v)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        },
+                        onValueChangeFinished = { finalVal ->
+                            repository.setModesThicknessDp(finalVal.roundToInt().toFloat())
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 800L)
+                        }
+                    )
+
+                    SliderRow(
+                        title = "Pill Height",
+                        valueLabel = "${settings.modesLengthDp.roundToInt()} dp",
+                        value = settings.modesLengthDp,
+                        valueRange = 40f..240f,
+                        onValueChange = { v ->
+                            val snapped = v.roundToInt().toFloat()
+                            repository.setModesLengthDp(snapped)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL) { s ->
+                                s.copy(overrideHeightDp = snapped)
+                            }
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        },
+                        onStepDown = {
+                            val v = (settings.modesLengthDp - 1f).coerceIn(40f, 240f)
+                            repository.setModesLengthDp(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL) { s ->
+                                s.copy(overrideHeightDp = v)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        },
+                        onStepUp = {
+                            val v = (settings.modesLengthDp + 1f).coerceIn(40f, 240f)
+                            repository.setModesLengthDp(v)
+                            LivePreviewController.onSliderDrag(PreviewTarget.ACTIONS_PANEL) { s ->
+                                s.copy(overrideHeightDp = v)
+                            }
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 1500L)
+                        },
+                        onValueChangeFinished = { finalVal ->
+                            repository.setModesLengthDp(finalVal.roundToInt().toFloat())
+                            LivePreviewController.onSliderRelease(800L)
+                            repository.requestLivePreview(PreviewTarget.ACTIONS_PANEL, durationMs = 800L)
+                        }
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Show Labels",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Switch(
+                            checked = settings.showActionsLabel,
+                            onCheckedChange = repository::setShowActionsLabel
+                        )
+                    }
+
+                    CustomModesListSection(
+                        modes = settings.customModes,
+                        onAddMode = onAddMode,
+                        onEditMode = onEditMode,
+                        onDeleteMode = onDeleteMode,
+                        onMoveUp = onMoveUp,
+                        onMoveDown = onMoveDown
+                    )
+                }
+            }
+        }
+    }
+
+    if (isScanningCustomButton) {
+        CustomButtonScannerDialog(
+            currentButtonLabel = settings.customButtonLabel,
+            onDismiss = { isScanningCustomButton = false },
+            onButtonDetected = { keyCode, scanCode, label ->
+                repository.setCustomHardwareButton(keyCode, scanCode, label)
+                isScanningCustomButton = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun HowToUseActionsCard() {
+    var showDialog by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { showDialog = true }
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Column {
+                    Text(
+                        text = "How to Use Actions Panel",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Routines & automation setup guide",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = {
+                Text("How to Use Actions Panel", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "How It Works",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Trigger the bezel Actions wheel using your assigned hardware shortcut (e.g. Double-Tap or Both Volume Buttons). Scroll with touch or step with volume buttons to pick an action.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "What You Can Automate",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "• Samsung Modes & Routines: Emits a silent notification with the mode keyword that your Samsung routine can detect as an 'If' condition.\n• Tasker, MacroDroid, Automate: Receives broadcast 'com.nudge.edge.MODE_CHANGED' with extras 'mode', 'mode_id', and 'mode_name'.\n• Custom profiles: Switch presets for Work, Sleep, Gym, Gaming, or Driving.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Quick Setup Steps",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "1. Choose your preferred Hardware Trigger Button below.\n2. Add or reorder modes in the Modes Manager.\n3. In Samsung Modes & Routines or Tasker, create a routine that listens for the notification keyword (tap any keyword below the modes in modes manager to copy it).",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showDialog = false },
+                    shape = CircleShape
+                ) {
+                    Text("Got It")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun CustomButtonScannerDialog(
+    currentButtonLabel: String? = null,
+    onDismiss: () -> Unit,
+    onButtonDetected: (keyCode: Int, scanCode: Int, label: String) -> Unit
+) {
+    var secondsLeft by remember { mutableStateOf(10) }
+    var detectedButton by remember { mutableStateOf<Triple<Int, Int, String>?>(null) }
+
+    DisposableEffect(Unit) {
+        NudgeAccessibilityService.isScanningCustomButton = true
+        NudgeAccessibilityService.onCustomButtonScanned = { keyCode, scanCode, label ->
+            detectedButton = Triple(keyCode, scanCode, label)
+        }
+        onDispose {
+            NudgeAccessibilityService.isScanningCustomButton = false
+            NudgeAccessibilityService.onCustomButtonScanned = null
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (secondsLeft > 0 && detectedButton == null) {
+            kotlinx.coroutines.delay(1000L)
+            secondsLeft -= 1
+        }
+        if (detectedButton == null) {
+            onDismiss()
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Detect Custom Hardware Button", fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                if (!currentButtonLabel.isNullOrBlank()) {
+                    Text(
+                        text = "Currently Bound: $currentButtonLabel",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (detectedButton == null) {
+                    Text(
+                        text = "Press any additional physical button on your device now (e.g. Bixby, XCover, Action Button, Assistant, or Mute Switch)...",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "Listening... ($secondsLeft s)",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    val (kCode, sCode, label) = detectedButton!!
+                    Text(
+                        text = "Button Detected!",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text("Button: $label\nKeyCode: $kCode\nScanCode: $sCode")
+                }
+            }
+        },
+        confirmButton = {
+            if (detectedButton != null) {
+                Button(
+                    onClick = {
+                        val (kCode, sCode, label) = detectedButton!!
+                        onButtonDetected(kCode, sCode, label)
+                    },
+                    shape = CircleShape
+                ) {
+                    Text("Save Button")
+                }
+            } else {
+                TextButton(onClick = onDismiss) {
+                    Text(if (!currentButtonLabel.isNullOrBlank()) "Keep Current" else "Cancel")
+                }
+            }
+        },
+        dismissButton = {
+            if (detectedButton != null) {
+                TextButton(onClick = onDismiss) {
+                    Text("Discard")
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun CustomModesListSection(
+    modes: List<CustomMode>,
+    onAddMode: () -> Unit,
+    onEditMode: (CustomMode) -> Unit,
+    onDeleteMode: (CustomMode) -> Unit,
+    onMoveUp: (Int) -> Unit,
+    onMoveDown: (Int) -> Unit
+) {
+    val context = LocalContext.current
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = "Manage Modes",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Customize icons, colors & Action keywords",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+            modes.forEachIndexed { index, mode ->
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(mode.colorHex).copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = NudgeIcons.getIcon(mode.iconKey),
+                                contentDescription = mode.label,
+                                tint = Color(mode.colorHex),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = mode.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                                    .clickable {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Mode Keyword", mode.notificationKeyword))
+                                        Toast.makeText(context, "Copied: ${mode.notificationKeyword}", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = mode.notificationKeyword,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 10.sp
+                                )
+                                Icon(
+                                    imageVector = Icons.Rounded.ContentCopy,
+                                    contentDescription = "Copy keyword",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = { onMoveUp(index) },
+                            enabled = index > 0,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Rounded.ArrowUpward, contentDescription = "Move Up", modifier = Modifier.size(18.dp))
+                        }
+
+                        IconButton(
+                            onClick = { onMoveDown(index) },
+                            enabled = index < modes.lastIndex,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Rounded.ArrowDownward, contentDescription = "Move Down", modifier = Modifier.size(18.dp))
+                        }
+
+                        IconButton(
+                            onClick = { onEditMode(mode) },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Rounded.Edit, contentDescription = "Edit", modifier = Modifier.size(18.dp))
+                        }
+
+                        IconButton(
+                            onClick = { onDeleteMode(mode) },
+                            enabled = modes.size > 2,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.Delete,
+                                contentDescription = "Delete",
+                                tint = if (modes.size > 2) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            OutlinedButton(
+                onClick = onAddMode,
+                modifier = Modifier.fillMaxWidth(),
+                shape = CircleShape
+            ) {
+                Icon(Icons.Rounded.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Add New Mode")
+            }
+        }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EditCustomModeDialog(
+    mode: CustomMode?,
+    onDismiss: () -> Unit,
+    onSave: (CustomMode) -> Unit
+) {
+    val isEdit = mode != null
+    var label by remember { mutableStateOf(mode?.label ?: "") }
+    var notificationKeyword by remember { mutableStateOf(mode?.notificationKeyword ?: "") }
+    var userManuallyEditedKeyword by remember { mutableStateOf(isEdit) }
+    var selectedColor by remember { mutableLongStateOf(mode?.colorHex ?: NudgeIcons.ACCENT_COLORS.first()) }
+    var selectedIconKey by remember { mutableStateOf(mode?.iconKey ?: "Notifications") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(if (isEdit) "Edit Mode" else "Add New Mode")
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+
+                OutlinedTextField(
+                    value = label,
+                    shape = CircleShape,
+                    onValueChange = { newLabel ->
+                        label = newLabel
+                        if (!userManuallyEditedKeyword) {
+                            val clean = newLabel.trim().uppercase().replace(" ", "_")
+                            notificationKeyword = if (clean.isEmpty()) "" else "NUDGE_MODE_$clean"
+                        }
+                    },
+                    label = { Text("Mode Display Name") },
+                    placeholder = { Text("e.g. WORK, GYM, STUDY") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = notificationKeyword,
+                    shape = CircleShape,
+                    onValueChange = {
+                        userManuallyEditedKeyword = true
+                        notificationKeyword = it
+                    },
+                    label = { Text("Action Trigger Keyword") },
+                    placeholder = { Text("e.g. NUDGE_MODE_WORK") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text(
+                    text = "Accent Color",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    NudgeIcons.ACCENT_COLORS.forEach { colorHex ->
+                        val isSelected = selectedColor == colorHex
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(Color(colorHex))
+                                .border(
+                                    width = if (isSelected) 3.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Black.copy(alpha = 0.2f),
+                                    shape = CircleShape
+                                )
+                                .clickable { selectedColor = colorHex },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = "Selected",
+                                    tint = if (colorHex == 0xFFFFFFFFL) Color.Black else Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Text(
+                    text = "Choose Icon",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+
+                NudgeIcons.CATEGORIES.forEach { category ->
+                    Text(
+                        text = category.name,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        category.icons.forEach { iconEntry ->
+                            val isSelected = selectedIconKey == iconEntry.key
+                            Box(
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        if (isSelected) Color(selectedColor).copy(alpha = 0.25f)
+                                        else MaterialTheme.colorScheme.surfaceContainerHighest
+                                    )
+                                    .border(
+                                        width = if (isSelected) 2.dp else 0.dp,
+                                        color = if (isSelected) Color(selectedColor) else Color.Transparent,
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable { selectedIconKey = iconEntry.key },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = iconEntry.icon,
+                                    contentDescription = iconEntry.name,
+                                    tint = if (isSelected) Color(selectedColor) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val finalLabel = label.trim().ifEmpty { "CUSTOM" }
+                    val finalKeyword = notificationKeyword.trim().ifEmpty { "NUDGE_MODE_${finalLabel.uppercase()}" }
+                    val finalId = mode?.id ?: UUID.randomUUID().toString()
+                    onSave(
+                        CustomMode(
+                            id = finalId,
+                            label = finalLabel.uppercase(),
+                            notificationKeyword = finalKeyword,
+                            iconKey = selectedIconKey,
+                            colorHex = selectedColor,
+                            dndMode = "UNCHANGED",
+                            ringerMode = "UNCHANGED"
+                        )
+                    )
+                },
+                shape = CircleShape
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun HardwareTriggerSelector(
+    title: String,
+    selectedTrigger: HardwareTrigger,
+    onTriggerSelected: (HardwareTrigger) -> Unit
+) {
+    var showDialog by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { showDialog = true },
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = selectedTrigger.displayName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Tap to change trigger shortcut (7 available)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Rounded.Tune,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = {
+                Text(title, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    HardwareTrigger.entries.forEach { trigger ->
+                        val isSelected = selectedTrigger == trigger
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onTriggerSelected(trigger)
+                                    showDialog = false
+                                },
+                            shape = CircleShape,
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = trigger.displayName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                )
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "Selected",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun SideSelectorRow(
+    title: String,
+    selectedEdge: BezelEdge,
+    availableEdges: List<BezelEdge> = BezelEdge.entries,
+    onEdgeSelected: (BezelEdge) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            availableEdges.forEach { edge ->
+                val isSelected = selectedEdge == edge
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onEdgeSelected(edge) },
+                    shape = CircleShape,
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
+                ) {
+                    Text(
+                        text = edge.name,
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SliderRow(
+    title: String,
+    valueLabel: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    onStepDown: () -> Unit,
+    onStepUp: () -> Unit,
+    onValueChangeFinished: ((Float) -> Unit)? = null
+) {
+    var sliderValue by remember(value) {
+        mutableFloatStateOf(value.coerceIn(valueRange.start, valueRange.endInclusive))
+    }
+    val currentOnValueChange by rememberUpdatedState(onValueChange)
+    val currentOnFinished by rememberUpdatedState(onValueChangeFinished)
+
+    val displayLabel = remember(valueLabel, sliderValue, value) {
+        if (sliderValue == value) {
+            valueLabel
+        } else {
+            when {
+                valueLabel.endsWith(" dp") -> "${sliderValue.roundToInt()} dp"
+                valueLabel.endsWith("%") -> {
+                    if (valueRange.endInclusive <= 1.05f) "${(sliderValue * 100f).roundToInt()}%"
+                    else "${sliderValue.roundToInt()}%"
+                }
+                valueLabel.endsWith(" ms") -> "${sliderValue.roundToInt()} ms"
+                else -> {
+                    val suffix = valueLabel.dropWhile { it.isDigit() || it == '-' || it == '.' || it == ' ' }
+                    if (suffix.isNotEmpty()) "${sliderValue.roundToInt()} $suffix"
+                    else "${sliderValue.roundToInt()}"
+                }
+            }
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Text(
+                    text = displayLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilledTonalIconButton(
+                onClick = onStepDown,
+                modifier = Modifier.size(34.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Remove,
+                    contentDescription = "Decrease $title",
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            androidx.compose.material3.Slider(
+                value = sliderValue.coerceIn(valueRange.start, valueRange.endInclusive),
+                onValueChange = {
+                    sliderValue = it
+                    currentOnValueChange(it)
+                },
+                onValueChangeFinished = {
+                    currentOnFinished?.invoke(sliderValue)
+                },
+                valueRange = valueRange,
+                modifier = Modifier.weight(1f)
+            )
+            FilledTonalIconButton(
+                onClick = onStepUp,
+                modifier = Modifier.size(34.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Add,
+                    contentDescription = "Increase $title",
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}

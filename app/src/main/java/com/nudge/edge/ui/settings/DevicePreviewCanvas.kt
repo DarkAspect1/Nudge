@@ -133,7 +133,7 @@ fun DevicePreviewHeader(
                         "Enable Accessibility"
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis
@@ -323,7 +323,9 @@ fun DevicePreviewCanvas(
                                 protrusionPx = popProtrusionPx,
                                 screenEdge = popScreenEdge,
                                 highlight = previewTarget == PreviewTarget.POP_UP ||
-                                    previewTarget == PreviewTarget.POP_BOTH,
+                                    previewTarget == PreviewTarget.POP_BOTH ||
+                                    previewTarget == PreviewTarget.EDGE_POP_VOL_UP ||
+                                    previewTarget == PreviewTarget.EDGE_POP_ALL,
                                 accent = activeAccent,
                                 strokeWidth = 1.6.dp.toPx()
                             )
@@ -336,7 +338,9 @@ fun DevicePreviewCanvas(
                                 protrusionPx = popProtrusionPx,
                                 screenEdge = popScreenEdge,
                                 highlight = previewTarget == PreviewTarget.POP_DOWN ||
-                                    previewTarget == PreviewTarget.POP_BOTH,
+                                    previewTarget == PreviewTarget.POP_BOTH ||
+                                    previewTarget == PreviewTarget.EDGE_POP_VOL_DOWN ||
+                                    previewTarget == PreviewTarget.EDGE_POP_ALL,
                                 accent = activeAccent,
                                 strokeWidth = 1.6.dp.toPx()
                             )
@@ -351,7 +355,8 @@ fun DevicePreviewCanvas(
                                 spreadPx = powerSpreadPx,
                                 protrusionPx = powerProtrusionPx,
                                 screenEdge = popScreenEdge,
-                                highlight = previewTarget == PreviewTarget.POP_POWER,
+                                highlight = previewTarget == PreviewTarget.POP_POWER ||
+                                    previewTarget == PreviewTarget.EDGE_POP_POWER,
                                 accent = secondaryAccent,
                                 strokeWidth = 1.6.dp.toPx()
                             )
@@ -435,8 +440,8 @@ fun DevicePreviewCanvas(
                                         size = Size(pillW, pillBottom - fillTop)
                                     )
                                 }
-                                val glyphSize = (pillW * 0.45f).coerceAtLeast(3f)
-                                val glyphCenter = Offset(pillCenterX, pillBottom - pillW * 0.44f)
+                                val glyphSize = (pillW * 0.54f).coerceAtLeast(3f)
+                                val glyphCenter = Offset(pillCenterX, pillBottom - pillW * 0.50f)
                                 if (fillTop > pillTop) {
                                     clipRect(pillLeft, pillTop, pillRight, fillTop) {
                                         drawSpeakerGlyph(
@@ -510,8 +515,8 @@ fun DevicePreviewCanvas(
                                         size = Size(fillRight - pillLeft, pillW)
                                     )
                                 }
-                                val glyphSize = (pillW * 0.45f).coerceAtLeast(3f)
-                                val glyphCenter = Offset(pillLeft + pillW * 0.44f, pillCenterY)
+                                val glyphSize = (pillW * 0.54f).coerceAtLeast(3f)
+                                val glyphCenter = Offset(pillLeft + pillW * 0.50f, pillCenterY)
                                 if (fillRight > pillLeft) {
                                     clipRect(pillLeft, pillTop, fillRight, pillBottom) {
                                         drawSpeakerGlyph(
@@ -538,7 +543,6 @@ fun DevicePreviewCanvas(
                                 }
                             }
                         }
-
 
                     }
 

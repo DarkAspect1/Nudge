@@ -20,8 +20,8 @@ android {
         applicationId = "com.nudge.edge"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "2.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -60,6 +60,22 @@ android {
         buildConfig = true
     }
 
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("online") {
+            dimension = "distribution"
+            buildConfigField("boolean", "ENABLE_UPDATER", "true")
+            buildConfigField("String", "GITHUB_OWNER", "\"DarkAspect1\"")
+            buildConfigField("String", "GITHUB_REPO", "\"Nudge\"")
+        }
+        create("offline") {
+            dimension = "distribution"
+            buildConfigField("boolean", "ENABLE_UPDATER", "false")
+            buildConfigField("String", "GITHUB_OWNER", "\"\"")
+            buildConfigField("String", "GITHUB_REPO", "\"\"")
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -69,8 +85,10 @@ android {
 
 androidComponents {
     onVariants(selector().withBuildType("release")) { variant ->
+        val flavor = variant.flavorName?.lowercase() ?: if (variant.name.contains("online", ignoreCase = true)) "online" else "offline"
+        val apkName = "Nudge-$flavor.apk"
         variant.outputs.forEach { output ->
-            output.outputFileName.set("Nudge.apk")
+            output.outputFileName.set(apkName)
         }
     }
 }
@@ -89,6 +107,10 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.datastore.preferences)
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
 }

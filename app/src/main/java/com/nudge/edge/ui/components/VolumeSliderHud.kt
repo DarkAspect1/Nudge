@@ -1,7 +1,14 @@
 package com.nudge.edge.ui.components
 
+import kotlin.math.roundToInt
+import android.graphics.drawable.Drawable
+import android.media.AudioManager
+import androidx.core.graphics.drawable.toBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -12,6 +19,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.BluetoothAudio
+import androidx.compose.material.icons.rounded.Call
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,14 +43,24 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.VectorPainter
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -64,8 +88,8 @@ const val HUD_CUTOUT_PILL_TRIM_DP = 4f
 const val HUD_CUTOUT_FILLET_TAIL_DP = 22f
 const val HUD_CUTOUT_PILL_START_OFFSET_DP = HUD_CUTOUT_FILLET_TAIL_DP + HUD_CUTOUT_INNER_PAD_DP
 
-fun computeHudOuterSpanDp(pillHeightDp: Float): Float {
-    return computeHudDrawnPillSpanDp(pillHeightDp) + HUD_CUTOUT_PILL_START_OFFSET_DP * 2f
+fun computeHudOuterSpanDp(pillHeightDp: Float, fluidityPercent: Int? = null): Float {
+    return computeHudDrawnPillSpanDp(pillHeightDp) + (HUD_CUTOUT_FILLET_TAIL_DP + HUD_CUTOUT_INNER_PAD_DP) * 2f
 }
 
 fun computeHudDrawnPillSpanDp(pillHeightDp: Float): Float {
@@ -83,15 +107,17 @@ fun buildHudHousingPath(
     screenEdge: ScreenEdge,
     pillCornerRadiusPx: Float,
     innerPadPx: Float,
-    filletTailPx: Float
+    filletTailPx: Float,
+    curvaturePercent: Int = 75
 ) {
     path.reset()
     if (width <= 0f || height <= 0f) return
+    val effectiveFilletTailPx = filletTailPx
 
     when (screenEdge) {
         ScreenEdge.RIGHT,
         ScreenEdge.LEFT -> {
-            val filletHeight = filletTailPx.coerceAtMost(height * 0.25f)
+            val filletHeight = effectiveFilletTailPx.coerceAtMost(height * 0.25f)
             val maxOuterRadius = minOf(
                 width * 0.85f,
                 height * 0.5f - filletHeight
@@ -113,7 +139,7 @@ fun buildHudHousingPath(
             }
             val topArcStartY = topCornerCenterY - outerRadius * SLOPE_SIN
             val bottomArcEndY = bottomCornerCenterY + outerRadius * SLOPE_SIN
-            val tangentLength = width * 0.38f
+            val tangentLength = width * 0.36f
             val scoopCtrlX = if (isRight) {
                 arcJoinX + tangentLength * SLOPE_SIN
             } else {
@@ -168,7 +194,7 @@ fun buildHudHousingPath(
 
         ScreenEdge.TOP,
         ScreenEdge.BOTTOM -> {
-            val filletSpan = filletTailPx.coerceAtMost(width * 0.25f)
+            val filletSpan = effectiveFilletTailPx.coerceAtMost(width * 0.25f)
             val maxOuterRadius = minOf(
                 height * 0.85f,
                 width * 0.5f - filletSpan
@@ -190,7 +216,7 @@ fun buildHudHousingPath(
             }
             val leftArcStartX = leftCornerCenterX - outerRadius * SLOPE_SIN
             val rightArcEndX = rightCornerCenterX + outerRadius * SLOPE_SIN
-            val tangentLength = height * 0.38f
+            val tangentLength = height * 0.36f
             val scoopCtrlY = if (isBottom) {
                 arcJoinY + tangentLength * SLOPE_SIN
             } else {
@@ -251,107 +277,170 @@ fun DrawScope.drawSpeakerGlyph(
     color: Color,
     volumeFraction: Float,
     pathBuffer: Path,
-    cutoutColor: Color = HudTrackCharcoal
+    cutoutColor: Color = Color.Transparent
 ) {
-    val s = glyphSize
-    val barCount = when {
-        volumeFraction <= 0.005f -> 0
-        volumeFraction <= 0.34f -> 1
-        volumeFraction <= 0.67f -> 2
-        else -> 3
-    }
-    val shiftX = when (barCount) {
-        0 -> s * 0.005f
-        1 -> -s * 0.07f
-        2 -> -s * 0.15f
-        else -> -s * 0.23f
-    }
+    drawCustomSpeakerIcon(
+        center = center,
+        size = glyphSize,
+        color = color,
+        volumeFraction = volumeFraction,
+        pathBuffer = pathBuffer
+    )
+}
 
-    val left = center.x - s * 0.20f + shiftX
-    val midX = center.x - s * 0.01f + shiftX
-    val right = center.x + s * 0.19f + shiftX
-    val cy = center.y
-    val hBody = s * 0.16f
-    val hCone = s * 0.34f
-    val rBack = s * 0.08f
-    val rFront = s * 0.07f
+fun DrawScope.drawCustomSpeakerIcon(
+    center: Offset,
+    size: Float,
+    color: Color,
+    volumeFraction: Float,
+    pathBuffer: Path,
+    horizontalShiftUnits: Float = 0f,
+    wave1Alpha: Float = if (volumeFraction >= 0.01f) 1f else 0f,
+    wave1Scale: Float = if (volumeFraction >= 0.01f) 1f else 0.85f,
+    wave2Alpha: Float = if (volumeFraction >= 0.34f) 1f else 0f,
+    wave2Scale: Float = if (volumeFraction >= 0.34f) 1f else 0.85f,
+    wave3Alpha: Float = if (volumeFraction >= 0.67f) 1f else 0f,
+    wave3Scale: Float = if (volumeFraction >= 0.67f) 1f else 0.85f
+) {
+    val s = size / 24f
+    val ox = center.x - 12f * s + horizontalShiftUnits * s
+    val oy = center.y - 12f * s
 
     pathBuffer.reset()
-    pathBuffer.moveTo(left + rBack, cy - hBody)
-    pathBuffer.lineTo(midX - rBack * 0.25f, cy - hBody)
-    pathBuffer.quadraticTo(midX, cy - hBody, midX + rBack * 0.65f, cy - hBody - rBack * 0.65f)
-    pathBuffer.lineTo(right - rFront * 1.1f, cy - hCone + rFront * 0.7f)
-    pathBuffer.quadraticTo(right, cy - hCone, right, cy - hCone + rFront * 1.15f)
-    pathBuffer.lineTo(right, cy + hCone - rFront * 1.15f)
-    pathBuffer.quadraticTo(right, cy + hCone, right - rFront * 1.1f, cy + hCone - rFront * 0.7f)
-    pathBuffer.lineTo(midX + rBack * 0.65f, cy + hBody + rBack * 0.65f)
-    pathBuffer.quadraticTo(midX, cy + hBody, midX - rBack * 0.25f, cy + hBody)
-    pathBuffer.lineTo(left + rBack, cy + hBody)
-    pathBuffer.quadraticTo(left, cy + hBody, left, cy + hBody - rBack)
-    pathBuffer.lineTo(left, cy - hBody + rBack)
-    pathBuffer.quadraticTo(left, cy - hBody, left + rBack, cy - hBody)
+    pathBuffer.moveTo(ox + 3.2f * s, oy + 9.2f * s)
+    pathBuffer.lineTo(ox + 6.6f * s, oy + 9.2f * s)
+    pathBuffer.lineTo(ox + 11.0f * s, oy + 5.2f * s)
+    pathBuffer.lineTo(ox + 11.0f * s, oy + 18.8f * s)
+    pathBuffer.lineTo(ox + 6.6f * s, oy + 14.8f * s)
+    pathBuffer.lineTo(ox + 3.2f * s, oy + 14.8f * s)
     pathBuffer.close()
-    drawPath(path = pathBuffer, color = color)
 
-    val strokeW = (s * 0.095f).coerceAtLeast(1.2f)
+    drawIntoCanvas { canvas ->
+        val paint = Paint().apply {
+            this.color = color
+            this.isAntiAlias = true
+            this.pathEffect = PathEffect.cornerPathEffect(1.6f * s)
+        }
+        canvas.drawPath(pathBuffer, paint)
+    }
 
-    if (barCount == 0) {
-        val slashStart = Offset(center.x - s * 0.22f, cy - s * 0.25f)
-        val slashEnd = Offset(center.x + s * 0.22f, cy + s * 0.25f)
+    val strokeWidth = 2.0f * s
+    val arcCenter = Offset(ox + 11.0f * s, oy + 12.0f * s)
+
+    if (volumeFraction < 0.01f) {
+        val xCenter = Offset(ox + 16.0f * s, oy + 12.0f * s)
+        val arm = 2.4f * s
+        val xStrokeWidth = 1.8f * s
         drawLine(
-            color = cutoutColor,
-            start = slashStart,
-            end = slashEnd,
-            strokeWidth = strokeW * 2.0f,
+            color = color,
+            start = Offset(xCenter.x - arm, xCenter.y - arm),
+            end = Offset(xCenter.x + arm, xCenter.y + arm),
+            strokeWidth = xStrokeWidth,
             cap = StrokeCap.Round
         )
         drawLine(
             color = color,
-            start = slashStart,
-            end = slashEnd,
-            strokeWidth = strokeW,
+            start = Offset(xCenter.x - arm, xCenter.y + arm),
+            end = Offset(xCenter.x + arm, xCenter.y - arm),
+            strokeWidth = xStrokeWidth,
             cap = StrokeCap.Round
+        )
+    }
+
+    if (wave1Alpha > 0.005f) {
+        val r1 = 3.2f * s * wave1Scale.coerceIn(0.5f, 1.5f)
+        drawArc(
+            color = color.copy(alpha = color.alpha * wave1Alpha.coerceIn(0f, 1f)),
+            startAngle = -38f,
+            sweepAngle = 76f,
+            useCenter = false,
+            topLeft = Offset(arcCenter.x - r1, arcCenter.y - r1),
+            size = Size(r1 * 2f, r1 * 2f),
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+        )
+    }
+
+    if (wave2Alpha > 0.005f) {
+        val r2 = 5.8f * s * wave2Scale.coerceIn(0.5f, 1.5f)
+        drawArc(
+            color = color.copy(alpha = color.alpha * wave2Alpha.coerceIn(0f, 1f)),
+            startAngle = -38f,
+            sweepAngle = 76f,
+            useCenter = false,
+            topLeft = Offset(arcCenter.x - r2, arcCenter.y - r2),
+            size = Size(r2 * 2f, r2 * 2f),
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+        )
+    }
+
+    if (wave3Alpha > 0.005f) {
+        val r3 = 8.4f * s * wave3Scale.coerceIn(0.5f, 1.5f)
+        drawArc(
+            color = color.copy(alpha = color.alpha * wave3Alpha.coerceIn(0f, 1f)),
+            startAngle = -38f,
+            sweepAngle = 76f,
+            useCenter = false,
+            topLeft = Offset(arcCenter.x - r3, arcCenter.y - r3),
+            size = Size(r3 * 2f, r3 * 2f),
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+        )
+    }
+}
+
+private fun DrawScope.drawDynamicSliderIcon(
+    center: Offset,
+    iconSize: Float,
+    displayedFraction: Float,
+    isBluetoothConnected: Boolean,
+    inCall: Boolean,
+    isMediaPlayingNow: Boolean,
+    activeStreamType: Int,
+    darkColor: Color,
+    whiteColor: Color,
+    isWhiteSection: Boolean,
+    callPainter: VectorPainter,
+    pathBuffer: Path,
+    horizontalShiftUnits: Float,
+    wave1Alpha: Float,
+    wave1Scale: Float,
+    wave2Alpha: Float,
+    wave2Scale: Float,
+    wave3Alpha: Float,
+    wave3Scale: Float,
+    customAppIcon: Drawable? = null
+) {
+    if (customAppIcon != null) {
+        val bitmap = customAppIcon.toBitmap(iconSize.toInt().coerceAtLeast(1), iconSize.toInt().coerceAtLeast(1)).asImageBitmap()
+        drawImage(
+            image = bitmap,
+            topLeft = Offset(center.x - iconSize * 0.5f, center.y - iconSize * 0.5f)
         )
         return
     }
+    val isBt = isBluetoothConnected
+    val isCall = (inCall && !isMediaPlayingNow) || activeStreamType == AudioManager.STREAM_VOICE_CALL
+    val tintColor = if (isBt) Color(0xFFFF453A) else if (isWhiteSection) whiteColor else darkColor
 
-    val arcOriginX = center.x + s * 0.14f + shiftX
-    val arcColor = color.copy(alpha = color.alpha * 0.85f)
-
-    val r1 = s * 0.20f
-    drawArc(
-        color = arcColor,
-        startAngle = -32f,
-        sweepAngle = 64f,
-        useCenter = false,
-        topLeft = Offset(arcOriginX - r1, cy - r1),
-        size = Size(r1 * 2f, r1 * 2f),
-        style = Stroke(width = strokeW, cap = StrokeCap.Round)
-    )
-
-    if (barCount >= 2) {
-        val r2 = s * 0.36f
-        drawArc(
-            color = arcColor,
-            startAngle = -36f,
-            sweepAngle = 72f,
-            useCenter = false,
-            topLeft = Offset(arcOriginX - r2, cy - r2),
-            size = Size(r2 * 2f, r2 * 2f),
-            style = Stroke(width = strokeW, cap = StrokeCap.Round)
-        )
-    }
-
-    if (barCount >= 3) {
-        val r3 = s * 0.52f
-        drawArc(
-            color = arcColor,
-            startAngle = -40f,
-            sweepAngle = 80f,
-            useCenter = false,
-            topLeft = Offset(arcOriginX - r3, cy - r3),
-            size = Size(r3 * 2f, r3 * 2f),
-            style = Stroke(width = strokeW, cap = StrokeCap.Round)
+    if (isCall) {
+        translate(left = center.x - iconSize * 0.5f, top = center.y - iconSize * 0.5f) {
+            with(callPainter) {
+                draw(size = Size(iconSize, iconSize), colorFilter = ColorFilter.tint(tintColor))
+            }
+        }
+    } else {
+        drawCustomSpeakerIcon(
+            center = center,
+            size = iconSize,
+            color = tintColor,
+            volumeFraction = displayedFraction,
+            pathBuffer = pathBuffer,
+            horizontalShiftUnits = horizontalShiftUnits,
+            wave1Alpha = wave1Alpha,
+            wave1Scale = wave1Scale,
+            wave2Alpha = wave2Alpha,
+            wave2Scale = wave2Scale,
+            wave3Alpha = wave3Alpha,
+            wave3Scale = wave3Scale
         )
     }
 }
@@ -367,10 +456,19 @@ fun VolumeSliderHud(
     volumeFraction: Float,
     isVisible: Boolean,
     resetEpoch: Int = 0,
+    isBluetoothConnected: Boolean = false,
+    activeStreamType: Int = AudioManager.STREAM_MUSIC,
+    inCall: Boolean = false,
+    isMediaPlayingNow: Boolean = false,
+    volumeSliderFluidityPercent: Int = 75,
+    maxVolumeLimit: Int = 100,
+    customAppIcon: Drawable? = null,
     onVolumeScrub: (Float) -> Unit,
     onScrubStateChanged: (Boolean) -> Unit,
     onOpenMenu: () -> Unit,
     interactive: Boolean = true,
+    instantAppearance: Boolean = false,
+    showVolumeCounter: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
@@ -379,6 +477,8 @@ fun VolumeSliderHud(
     val housingPath = remember { Path() }
     val pillPath = remember { Path() }
     val speakerPath = remember { Path() }
+
+    val callPainter = rememberVectorPainter(Icons.Rounded.Call)
 
     var isScrubbing by remember { mutableStateOf(false) }
     var scrubFraction by remember { mutableFloatStateOf(volumeFraction.coerceIn(0f, 1f)) }
@@ -393,21 +493,72 @@ fun VolumeSliderHud(
         animationSpec = spring(dampingRatio = 0.84f, stiffness = 480f),
         label = "hudEdgeInset"
     )
-    val animatedFraction by animateFloatAsState(
-        targetValue = volumeFraction.coerceIn(0f, 1f),
-        animationSpec = tween(durationMillis = 70, easing = LinearEasing),
-        label = "hudVolumeFill"
+    val targetNormalizedVolume = if (isScrubbing) scrubFraction else volumeFraction.coerceIn(0f, 1f)
+    val animatedVolume by animateFloatAsState(
+        targetValue = targetNormalizedVolume,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "SmoothVolumeScrub"
     )
-    val displayedFraction = if (isScrubbing) {
-        scrubFraction.coerceIn(0f, 1f)
-    } else {
-        animatedFraction.coerceIn(0f, 1f)
+    val displayedFraction = animatedVolume.coerceIn(0f, 1f)
+    val volumePercent = (displayedFraction * 100f).roundToInt()
+    val activeWaveCount = when {
+        volumePercent <= 0 -> 0
+        volumePercent <= 33 -> 1
+        volumePercent <= 66 -> 2
+        else -> 3
     }
+    val targetCenterShiftUnits = when (activeWaveCount) {
+        0 -> 0.8f
+        1 -> 3.3f
+        2 -> 2.0f
+        else -> 0.7f
+    }
+    val animatedShiftUnits by animateFloatAsState(
+        targetValue = targetCenterShiftUnits,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "SoundIconRecenter"
+    )
+    val wave1Alpha by animateFloatAsState(
+        targetValue = if (activeWaveCount >= 1) 1f else 0f,
+        animationSpec = tween(150),
+        label = "hudWave1Alpha"
+    )
+    val wave1Scale by animateFloatAsState(
+        targetValue = if (activeWaveCount >= 1) 1f else 0.85f,
+        animationSpec = tween(150),
+        label = "hudWave1Scale"
+    )
+    val wave2Alpha by animateFloatAsState(
+        targetValue = if (activeWaveCount >= 2) 1f else 0f,
+        animationSpec = tween(150),
+        label = "hudWave2Alpha"
+    )
+    val wave2Scale by animateFloatAsState(
+        targetValue = if (activeWaveCount >= 2) 1f else 0.85f,
+        animationSpec = tween(150),
+        label = "hudWave2Scale"
+    )
+    val wave3Alpha by animateFloatAsState(
+        targetValue = if (activeWaveCount >= 3) 1f else 0f,
+        animationSpec = tween(150),
+        label = "hudWave3Alpha"
+    )
+    val wave3Scale by animateFloatAsState(
+        targetValue = if (activeWaveCount >= 3) 1f else 0.85f,
+        animationSpec = tween(150),
+        label = "hudWave3Scale"
+    )
 
     val isVerticalEdge = screenEdge == ScreenEdge.LEFT || screenEdge == ScreenEdge.RIGHT
     val maxInsetDp = maxOf(edgeInsetDp.coerceAtLeast(0f), animatedInsetDp)
     val cutoutThicknessDp = computeHudCutoutThicknessDp(hudWidthDp, animatedInsetDp)
-    val outerSpanDp = computeHudOuterSpanDp(hudHeightDp)
+    val outerSpanDp = computeHudOuterSpanDp(hudHeightDp, volumeSliderFluidityPercent)
     val drawnPillSpanDp = computeHudDrawnPillSpanDp(hudHeightDp)
     val totalThicknessDp = computeHudCutoutThicknessDp(hudWidthDp, maxInsetDp)
     val containerWidthDp = if (isVerticalEdge) totalThicknessDp else outerSpanDp
@@ -416,7 +567,7 @@ fun VolumeSliderHud(
     val pillStartPx = with(density) { HUD_CUTOUT_PILL_START_OFFSET_DP.dp.toPx() }
     val pillLenPx = with(density) { drawnPillSpanDp.dp.toPx() }
     val pillEndPx = pillStartPx + pillLenPx
-    val speakerTapZonePx = with(density) { (hudWidthDp * 0.90f).coerceIn(28f, 40f).dp.toPx() }
+    val speakerTapZonePx = with(density) { (hudWidthDp * 1.0f).coerceIn(32f, 48f).dp.toPx() }
     val tapSlopPx = with(density) { 6.dp.toPx() }
     val swipeMenuThresholdPx = with(density) { 14.dp.toPx() }
 
@@ -436,14 +587,21 @@ fun VolumeSliderHud(
 
     LaunchedEffect(isVisible, resetEpoch) {
         if (isVisible) {
-            slideProgress.animateTo(
-                targetValue = 1f,
-                animationSpec = spring(dampingRatio = 0.82f, stiffness = 740f)
-            )
+            if (instantAppearance) {
+                slideProgress.snapTo(1f)
+            } else {
+                slideProgress.animateTo(
+                    targetValue = 1f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    )
+                )
+            }
         } else {
             slideProgress.animateTo(
                 targetValue = 0f,
-                animationSpec = spring(dampingRatio = 0.92f, stiffness = 540f)
+                animationSpec = tween(180, easing = FastOutSlowInEasing)
             )
         }
     }
@@ -466,16 +624,6 @@ fun VolumeSliderHud(
             }
 
             var movedAlongTrack = false
-            var openedMenu = false
-            val longPressJob = coroutineScope.launch {
-                delay(380L)
-                if (!movedAlongTrack && !openedMenu) {
-                    openedMenu = true
-                    isScrubbing = false
-                    currentOnScrubStateChanged(false)
-                    currentOnOpenMenu()
-                }
-            }
 
             if (!inSpeakerZone) {
                 isScrubbing = true
@@ -494,30 +642,12 @@ fun VolumeSliderHud(
                 while (true) {
                     val event = awaitPointerEvent()
                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                    val dx = change.position.x - downX
                     val dy = change.position.y - downY
-
-                    val inwardDelta = when (edge) {
-                        ScreenEdge.RIGHT -> -dx
-                        ScreenEdge.LEFT -> dx
-                        ScreenEdge.TOP -> dy
-                        ScreenEdge.BOTTOM -> -dy
-                    }
+                    val dx = change.position.x - downX
                     val trackDelta = if (vertical) abs(dy) else abs(dx)
 
-                    if (!openedMenu && inwardDelta >= swipeMenuThresholdPx && inwardDelta > trackDelta * 1.25f) {
-                        openedMenu = true
-                        longPressJob.cancel()
-                        isScrubbing = false
-                        currentOnScrubStateChanged(false)
-                        change.consume()
-                        currentOnOpenMenu()
-                        break
-                    }
-
                     if (!change.pressed) {
-                        longPressJob.cancel()
-                        if (!openedMenu && inSpeakerZone && !movedAlongTrack) {
+                        if (inSpeakerZone && !movedAlongTrack) {
                             currentOnOpenMenu()
                         }
                         change.consume()
@@ -526,14 +656,13 @@ fun VolumeSliderHud(
 
                     if (trackDelta > tapSlopPx) {
                         movedAlongTrack = true
-                        longPressJob.cancel()
                         if (!isScrubbing) {
                             isScrubbing = true
                             currentOnScrubStateChanged(true)
                         }
                     }
 
-                    if (isScrubbing && !openedMenu) {
+                    if (isScrubbing) {
                         val updated = if (vertical) {
                             ((pEnd - change.position.y) / trackSpan).coerceIn(0f, 1f)
                         } else {
@@ -545,7 +674,6 @@ fun VolumeSliderHud(
                     change.consume()
                 }
             } finally {
-                longPressJob.cancel()
                 if (isScrubbing) {
                     isScrubbing = false
                     currentOnScrubStateChanged(false)
@@ -553,6 +681,8 @@ fun VolumeSliderHud(
             }
         }
     }
+
+    val effectiveSlideProgress = if (instantAppearance && isVisible) 1f else slideProgress.value
 
     Box(
         modifier = modifier
@@ -564,17 +694,30 @@ fun VolumeSliderHud(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    val hidden = 1f - slideProgress.value
+                    compositingStrategy = CompositingStrategy.Offscreen
+                    val hidden = 1f - effectiveSlideProgress
                     when (screenEdge) {
-                        ScreenEdge.RIGHT -> translationX = size.width * hidden
-                        ScreenEdge.LEFT -> translationX = -size.width * hidden
-                        ScreenEdge.TOP -> translationY = -size.height * hidden
-                        ScreenEdge.BOTTOM -> translationY = size.height * hidden
+                        ScreenEdge.RIGHT -> {
+                            transformOrigin = TransformOrigin(1f, 0.5f)
+                            translationX = (size.width * hidden).coerceAtLeast(0f)
+                        }
+                        ScreenEdge.LEFT -> {
+                            transformOrigin = TransformOrigin(0f, 0.5f)
+                            translationX = (-size.width * hidden).coerceAtMost(0f)
+                        }
+                        ScreenEdge.TOP -> {
+                            transformOrigin = TransformOrigin(0.5f, 0f)
+                            translationY = (-size.height * hidden).coerceAtMost(0f)
+                        }
+                        ScreenEdge.BOTTOM -> {
+                            transformOrigin = TransformOrigin(0.5f, 1f)
+                            translationY = (size.height * hidden).coerceAtLeast(0f)
+                        }
                     }
                 }
                 .then(gestureModifier)
         ) {
-            if (slideProgress.value <= 0.01f) return@Canvas
+            if (effectiveSlideProgress <= 0.01f) return@Canvas
 
             val pillW = hudWidthDp.dp.toPx()
             val pillSpan = drawnPillSpanDp.dp.toPx()
@@ -605,7 +748,8 @@ fun VolumeSliderHud(
                             screenEdge = screenEdge,
                             pillCornerRadiusPx = pillCornerRadius,
                             innerPadPx = innerPadPx,
-                            filletTailPx = filletTailPx
+                            filletTailPx = filletTailPx,
+                            curvaturePercent = volumeSliderFluidityPercent
                         )
                         drawPath(
                             path = housingPath,
@@ -614,11 +758,12 @@ fun VolumeSliderHud(
                     }
                 }
 
+                val verticalPad = (size.height - pillSpan) * 0.5f
                 val pillCenterX = bezelEdgeX + inwardDir * (bezelPadPx + pillW * 0.5f)
                 val pillLeft = pillCenterX - pillW * 0.5f
                 val pillRight = pillCenterX + pillW * 0.5f
-                val pillTop = pillStartOffsetPx
-                val pillBottom = pillStartOffsetPx + pillSpan
+                val pillTop = verticalPad
+                val pillBottom = verticalPad + pillSpan
 
                 pillPath.reset()
                 pillPath.addRoundRect(
@@ -639,37 +784,96 @@ fun VolumeSliderHud(
                             size = Size(pillW, pillBottom - fillTop)
                         )
                     }
-                    val iconSize = (pillW * 0.45f).coerceIn(12.dp.toPx(), 20.dp.toPx())
+                    val iconSize = (pillW * 0.54f).coerceIn(16.dp.toPx(), 28.dp.toPx())
                     val iconCenter = Offset(
                         x = pillCenterX,
-                        y = pillBottom - minOf(pillW * 0.44f, 18.dp.toPx())
+                        y = pillBottom - minOf(pillW * 0.50f, 24.dp.toPx())
                     )
+                    val counterSteps = (displayedFraction * maxVolumeLimit).roundToInt().coerceIn(0, maxVolumeLimit)
+                    val counterText = "$counterSteps"
+                    val counterTextSize = (pillW * 0.32f).coerceIn(10.dp.toPx(), 13.dp.toPx())
+                    val counterCenterY = pillTop + minOf(pillW * 0.45f, 18.dp.toPx())
+                    val speakerColorDark = if (isBluetoothConnected) Color(0xFFFF453A) else HudIconOnDark
+                    val speakerColorWhite = if (isBluetoothConnected) Color(0xFFFF453A) else HudIconOnWhite
                     if (fillTop > pillTop) {
                         clipRect(pillLeft, pillTop, pillRight, fillTop) {
-                            drawSpeakerGlyph(
+                            if (showVolumeCounter) {
+                                drawIntoCanvas { canvas ->
+                                    val textPaint = android.graphics.Paint().apply {
+                                        isAntiAlias = true
+                                        textAlign = android.graphics.Paint.Align.CENTER
+                                        textSize = counterTextSize
+                                        color = HudIconOnDark.toArgb()
+                                        typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                                    }
+                                    val baseline = counterCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
+                                    canvas.nativeCanvas.drawText(counterText, pillCenterX, baseline, textPaint)
+                                }
+                            }
+                            drawDynamicSliderIcon(
                                 center = iconCenter,
-                                glyphSize = iconSize,
-                                color = HudIconOnDark,
-                                volumeFraction = displayedFraction,
-                                pathBuffer = speakerPath,
-                                cutoutColor = HudTrackCharcoal
+                                iconSize = iconSize,
+                                displayedFraction = displayedFraction,
+                                isBluetoothConnected = isBluetoothConnected,
+                                inCall = inCall,
+                                isMediaPlayingNow = isMediaPlayingNow,
+                                activeStreamType = activeStreamType,
+                                darkColor = speakerColorDark,
+                                whiteColor = speakerColorWhite,
+                                isWhiteSection = false,
+                                callPainter = callPainter,
+                                pathBuffer = housingPath,
+                                horizontalShiftUnits = animatedShiftUnits,
+                                wave1Alpha = wave1Alpha,
+                                wave1Scale = wave1Scale,
+                                wave2Alpha = wave2Alpha,
+                                wave2Scale = wave2Scale,
+                                wave3Alpha = wave3Alpha,
+                                wave3Scale = wave3Scale,
+                                customAppIcon = customAppIcon
                             )
                         }
                     }
                     if (fillTop < pillBottom) {
                         clipRect(pillLeft, fillTop, pillRight, pillBottom) {
-                            drawSpeakerGlyph(
+                            if (showVolumeCounter) {
+                                drawIntoCanvas { canvas ->
+                                    val textPaint = android.graphics.Paint().apply {
+                                        isAntiAlias = true
+                                        textAlign = android.graphics.Paint.Align.CENTER
+                                        textSize = counterTextSize
+                                        color = HudIconOnWhite.toArgb()
+                                        typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                                    }
+                                    val baseline = counterCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
+                                    canvas.nativeCanvas.drawText(counterText, pillCenterX, baseline, textPaint)
+                                }
+                            }
+                            drawDynamicSliderIcon(
                                 center = iconCenter,
-                                glyphSize = iconSize,
-                                color = HudIconOnWhite,
-                                volumeFraction = displayedFraction,
-                                pathBuffer = speakerPath,
-                                cutoutColor = HudFillWhite
+                                iconSize = iconSize,
+                                displayedFraction = displayedFraction,
+                                isBluetoothConnected = isBluetoothConnected,
+                                inCall = inCall,
+                                isMediaPlayingNow = isMediaPlayingNow,
+                                activeStreamType = activeStreamType,
+                                darkColor = speakerColorDark,
+                                whiteColor = speakerColorWhite,
+                                isWhiteSection = true,
+                                callPainter = callPainter,
+                                pathBuffer = housingPath,
+                                horizontalShiftUnits = animatedShiftUnits,
+                                wave1Alpha = wave1Alpha,
+                                wave1Scale = wave1Scale,
+                                wave2Alpha = wave2Alpha,
+                                wave2Scale = wave2Scale,
+                                wave3Alpha = wave3Alpha,
+                                wave3Scale = wave3Scale,
+                                customAppIcon = customAppIcon
                             )
                         }
                     }
                 }
-
 
             } else {
                 val isTop = screenEdge == ScreenEdge.TOP
@@ -687,7 +891,8 @@ fun VolumeSliderHud(
                             screenEdge = screenEdge,
                             pillCornerRadiusPx = pillCornerRadius,
                             innerPadPx = innerPadPx,
-                            filletTailPx = filletTailPx
+                            filletTailPx = filletTailPx,
+                            curvaturePercent = volumeSliderFluidityPercent
                         )
                         drawPath(
                             path = housingPath,
@@ -696,11 +901,12 @@ fun VolumeSliderHud(
                     }
                 }
 
+                val horizontalPad = (size.width - pillSpan) * 0.5f
                 val pillCenterY = bezelEdgeY + inwardDir * (bezelPadPx + pillW * 0.5f)
                 val pillTop = pillCenterY - pillW * 0.5f
                 val pillBottom = pillCenterY + pillW * 0.5f
-                val pillLeft = pillStartOffsetPx
-                val pillRight = pillStartOffsetPx + pillSpan
+                val pillLeft = horizontalPad
+                val pillRight = horizontalPad + pillSpan
 
                 pillPath.reset()
                 pillPath.addRoundRect(
@@ -721,37 +927,96 @@ fun VolumeSliderHud(
                             size = Size(fillRight - pillLeft, pillW)
                         )
                     }
-                    val iconSize = (pillW * 0.45f).coerceIn(12.dp.toPx(), 20.dp.toPx())
+                    val iconSize = (pillW * 0.54f).coerceIn(16.dp.toPx(), 28.dp.toPx())
                     val iconCenter = Offset(
-                        x = pillLeft + minOf(pillW * 0.44f, 18.dp.toPx()),
+                        x = pillLeft + minOf(pillW * 0.50f, 24.dp.toPx()),
                         y = pillCenterY
                     )
+                    val counterSteps = (displayedFraction * maxVolumeLimit).roundToInt().coerceIn(0, maxVolumeLimit)
+                    val counterText = "$counterSteps"
+                    val counterTextSize = (pillW * 0.32f).coerceIn(10.dp.toPx(), 13.dp.toPx())
+                    val counterCenterX = pillRight - minOf(pillW * 0.45f, 18.dp.toPx())
+                    val speakerColorDark = if (isBluetoothConnected) Color(0xFFFF453A) else HudIconOnDark
+                    val speakerColorWhite = if (isBluetoothConnected) Color(0xFFFF453A) else HudIconOnWhite
                     if (fillRight > pillLeft) {
                         clipRect(pillLeft, pillTop, fillRight, pillBottom) {
-                            drawSpeakerGlyph(
+                            if (showVolumeCounter) {
+                                drawIntoCanvas { canvas ->
+                                    val textPaint = android.graphics.Paint().apply {
+                                        isAntiAlias = true
+                                        textAlign = android.graphics.Paint.Align.CENTER
+                                        textSize = counterTextSize
+                                        color = HudIconOnWhite.toArgb()
+                                        typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                                    }
+                                    val baseline = pillCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
+                                    canvas.nativeCanvas.drawText(counterText, counterCenterX, baseline, textPaint)
+                                }
+                            }
+                            drawDynamicSliderIcon(
                                 center = iconCenter,
-                                glyphSize = iconSize,
-                                color = HudIconOnWhite,
-                                volumeFraction = displayedFraction,
-                                pathBuffer = speakerPath,
-                                cutoutColor = HudFillWhite
+                                iconSize = iconSize,
+                                displayedFraction = displayedFraction,
+                                isBluetoothConnected = isBluetoothConnected,
+                                inCall = inCall,
+                                isMediaPlayingNow = isMediaPlayingNow,
+                                activeStreamType = activeStreamType,
+                                darkColor = speakerColorDark,
+                                whiteColor = speakerColorWhite,
+                                isWhiteSection = true,
+                                callPainter = callPainter,
+                                pathBuffer = housingPath,
+                                horizontalShiftUnits = animatedShiftUnits,
+                                wave1Alpha = wave1Alpha,
+                                wave1Scale = wave1Scale,
+                                wave2Alpha = wave2Alpha,
+                                wave2Scale = wave2Scale,
+                                wave3Alpha = wave3Alpha,
+                                wave3Scale = wave3Scale,
+                                customAppIcon = customAppIcon
                             )
                         }
                     }
                     if (fillRight < pillRight) {
                         clipRect(fillRight, pillTop, pillRight, pillBottom) {
-                            drawSpeakerGlyph(
+                            if (showVolumeCounter) {
+                                drawIntoCanvas { canvas ->
+                                    val textPaint = android.graphics.Paint().apply {
+                                        isAntiAlias = true
+                                        textAlign = android.graphics.Paint.Align.CENTER
+                                        textSize = counterTextSize
+                                        color = HudIconOnDark.toArgb()
+                                        typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                                    }
+                                    val baseline = pillCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
+                                    canvas.nativeCanvas.drawText(counterText, counterCenterX, baseline, textPaint)
+                                }
+                            }
+                            drawDynamicSliderIcon(
                                 center = iconCenter,
-                                glyphSize = iconSize,
-                                color = HudIconOnDark,
-                                volumeFraction = displayedFraction,
-                                pathBuffer = speakerPath,
-                                cutoutColor = HudTrackCharcoal
+                                iconSize = iconSize,
+                                displayedFraction = displayedFraction,
+                                isBluetoothConnected = isBluetoothConnected,
+                                inCall = inCall,
+                                isMediaPlayingNow = isMediaPlayingNow,
+                                activeStreamType = activeStreamType,
+                                darkColor = speakerColorDark,
+                                whiteColor = speakerColorWhite,
+                                isWhiteSection = false,
+                                callPainter = callPainter,
+                                pathBuffer = housingPath,
+                                horizontalShiftUnits = animatedShiftUnits,
+                                wave1Alpha = wave1Alpha,
+                                wave1Scale = wave1Scale,
+                                wave2Alpha = wave2Alpha,
+                                wave2Scale = wave2Scale,
+                                wave3Alpha = wave3Alpha,
+                                wave3Scale = wave3Scale,
+                                customAppIcon = customAppIcon
                             )
                         }
                     }
                 }
-
 
             }
         }

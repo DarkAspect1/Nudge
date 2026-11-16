@@ -10,8 +10,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.nudge.edge.model.EdgeOrientationMapper
@@ -309,7 +311,7 @@ fun EdgePopStripOverlay(
         }
     }
 
-    Canvas(modifier = modifier.fillMaxSize()) {
+    Canvas(modifier = modifier.fillMaxSize().graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)) {
         val isVertical = screenEdge == ScreenEdge.LEFT || screenEdge == ScreenEdge.RIGHT
         val axisLen = if (isVertical) size.height else size.width
         val volSpreadPx = settings.popHeightDp.dp.toPx()
@@ -336,10 +338,10 @@ fun EdgePopStripOverlay(
 
         val upP = (volProtrusionBasePx * upProgress.value).coerceAtLeast(0f)
         val downP = (volProtrusionBasePx * downProgress.value).coerceAtLeast(0f)
-        val delta = abs(upCenterPx - downCenterPx)
+        val gapPx = abs(upCenterPx - downCenterPx) - volSpreadPx
         val shouldMergeVolume = upP > 0.25f &&
             downP > 0.25f &&
-            delta < (volSpreadPx * 2f)
+            gapPx <= 28.dp.toPx()
 
         if (shouldMergeVolume) {
             buildMergedEdgePopPath(

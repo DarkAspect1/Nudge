@@ -2,18 +2,26 @@ package com.nudge.edge
 
 import android.view.Surface
 import com.nudge.edge.data.VolumeController
+import com.nudge.edge.model.AppMode
+import com.nudge.edge.model.DndModeType
 import com.nudge.edge.model.EdgeOrientationMapper
 import com.nudge.edge.model.EdgeSide
+import com.nudge.edge.model.HardwareTrigger
 import com.nudge.edge.model.HudTriggerMode
 import com.nudge.edge.model.NudgeSettings
 import com.nudge.edge.model.ScreenEdge
+import com.nudge.edge.model.toScreenEdge
+import com.nudge.edge.ui.components.DND_BEZEL_FILLET_DP
 import com.nudge.edge.ui.components.HUD_CUTOUT_BEZEL_PAD_DP
 import com.nudge.edge.ui.components.HUD_CUTOUT_FILLET_TAIL_DP
 import com.nudge.edge.ui.components.HUD_CUTOUT_INNER_PAD_DP
 import com.nudge.edge.ui.components.HUD_CUTOUT_PILL_START_OFFSET_DP
+import com.nudge.edge.ui.components.MODES_BEZEL_FILLET_DP
+import com.nudge.edge.ui.components.computeDndOuterSpanDp
 import com.nudge.edge.ui.components.computeHudCutoutThicknessDp
 import com.nudge.edge.ui.components.computeHudDrawnPillSpanDp
 import com.nudge.edge.ui.components.computeHudOuterSpanDp
+import com.nudge.edge.ui.components.computeModesOuterSpanDp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -49,7 +57,63 @@ class NudgeSettingsTest {
         assertEquals(72f, defaults.powerPopHeightDp, 0.001f)
         assertTrue(defaults.hudSideSynced)
         assertTrue(defaults.hapticsEnabled)
+        assertTrue(defaults.edgePopHapticsEnabled)
+        assertTrue(defaults.volumeSliderHapticsEnabled)
+        assertTrue(defaults.dndPanelHapticsEnabled)
+        assertTrue(defaults.actionsPanelHapticsEnabled)
+        assertFalse(defaults.mixerAttachToSlider)
+        assertEquals(50f, defaults.mixerPositionXPercent, 0.001f)
+        assertEquals(50f, defaults.mixerPositionYPercent, 0.001f)
+        assertEquals(228f, defaults.mixerPopupWidthDp, 0.001f)
+        assertEquals(250f, defaults.mixerPopupHeightDp, 0.001f)
+        assertEquals(38f, defaults.mixerPillWidthDp, 0.001f)
+        assertEquals(130f, defaults.mixerPillHeightDp, 0.001f)
+        assertEquals(10f, defaults.mixerPillSpacingDp, 0.001f)
         assertFalse(defaults.lightMode)
+        assertTrue(defaults.isEdgePopMasterEnabled)
+
+        assertTrue(defaults.enableDndToggle)
+        assertEquals(DndModeType.SILENT_RING, defaults.dndModeType)
+        assertEquals(HardwareTrigger.NONE, defaults.dndTrigger)
+        assertEquals(250L, defaults.dndDoubleTapTimeoutMs)
+        assertEquals(1500L, defaults.dndTimeoutMs)
+        assertEquals(com.nudge.edge.model.BezelEdge.RIGHT, defaults.dndPortraitEdge)
+        assertEquals(0.50f, defaults.dndPortraitOffsetPercent, 0.001f)
+        assertEquals(com.nudge.edge.model.BezelEdge.TOP, defaults.dndLandscapeEdge)
+        assertEquals(0.50f, defaults.dndLandscapeOffsetPercent, 0.001f)
+        assertEquals(42f, defaults.dndThicknessDp, 0.001f)
+        assertEquals(108f, defaults.dndLengthDp, 0.001f)
+        assertEquals(24f, defaults.dndIconSizeDp, 0.001f)
+        assertEquals(38f, defaults.dndUnfocusedOffsetDp, 0.001f)
+        assertEquals(80, defaults.dndPanelFluidityPercent)
+
+        assertTrue(defaults.enableActionsPanel)
+        assertEquals(HardwareTrigger.NONE, defaults.modesTrigger)
+        assertEquals(250L, defaults.modesDoubleTapTimeoutMs)
+        assertEquals(120L, defaults.simultaneousPressTimeoutMs)
+        assertEquals(24f, defaults.actionsIconSizeDp, 0.001f)
+        assertEquals(32f, defaults.actionsIconSpacingDp, 0.001f)
+        assertEquals(80, defaults.actionsPanelFluidityPercent)
+        assertFalse(defaults.isHideAccessibilityEnabled)
+        assertTrue(defaults.cloakedPackages.isEmpty())
+        assertTrue(defaults.isAutoKeepAliveViaShizuku)
+        assertFalse(defaults.isShizukuWatchdogEnabled)
+        assertTrue(defaults.enableModesNotificationBridge)
+        assertFalse(defaults.enableModesBuiltInPresets)
+        assertEquals(2000L, defaults.modesTimeoutMs)
+        assertEquals(com.nudge.edge.model.BezelEdge.RIGHT, defaults.modesPortraitEdge)
+        assertEquals(0.50f, defaults.modesPortraitOffsetPercent, 0.001f)
+        assertEquals(com.nudge.edge.model.BezelEdge.TOP, defaults.modesLandscapeEdge)
+        assertEquals(0.50f, defaults.modesLandscapeOffsetPercent, 0.001f)
+        assertEquals(44f, defaults.modesThicknessDp, 0.001f)
+        assertEquals(148f, defaults.modesLengthDp, 0.001f)
+        assertEquals(5, defaults.customModes.size)
+        assertEquals(75, defaults.edgePopFluidityPercent)
+        assertEquals(75, defaults.volumeSliderFluidityPercent)
+        assertFalse(defaults.isPerAppVolumeEnabled)
+        assertEquals("ALONGSIDE_SLIDER", defaults.perAppVolumeDisplayMode)
+        assertTrue(defaults.isAlwaysShowCallSliderInMixer)
+        assertFalse(defaults.showVolumeCounter)
     }
 
     @Test
@@ -72,7 +136,7 @@ class NudgeSettingsTest {
         assertEquals(4f, NudgeSettings.clampPopWidth(1f), 0.001f)
         assertEquals(40f, NudgeSettings.clampPopWidth(60f), 0.001f)
         assertEquals(24f, NudgeSettings.clampPopHeight(10f), 0.001f)
-        assertEquals(180f, NudgeSettings.clampPopHeight(240f), 0.001f)
+        assertEquals(200f, NudgeSettings.clampPopHeight(240f), 0.001f)
         assertEquals(100L, NudgeSettings.clampPopAutoHideMs(20L))
         assertEquals(1500L, NudgeSettings.clampPopAutoHideMs(5000L))
         assertEquals(1, NudgeSettings.clampVolumeStep(0))
@@ -87,6 +151,113 @@ class NudgeSettingsTest {
         assertEquals(48f, NudgeSettings.clampHudEdgeInset(80f), 0.001f)
         assertEquals(250L, NudgeSettings.clampAutoHideMs(100L))
         assertEquals(5000L, NudgeSettings.clampAutoHideMs(9000L))
+
+        assertEquals(500L, NudgeSettings.clampDndTimeoutMs(100L))
+        assertEquals(4000L, NudgeSettings.clampDndTimeoutMs(8000L))
+        assertEquals(10f, NudgeSettings.clampDndWidth(5f), 0.001f)
+        assertEquals(72f, NudgeSettings.clampDndWidth(100f), 0.001f)
+        assertEquals(70f, NudgeSettings.clampDndHeight(40f), 0.001f)
+        assertEquals(180f, NudgeSettings.clampDndHeight(300f), 0.001f)
+
+        assertEquals(800L, NudgeSettings.clampModesTimeoutMs(200L))
+        assertEquals(5000L, NudgeSettings.clampModesTimeoutMs(10000L))
+        assertEquals(10f, NudgeSettings.clampModesWidth(5f), 0.001f)
+        assertEquals(72f, NudgeSettings.clampModesWidth(90f), 0.001f)
+        assertEquals(100f, NudgeSettings.clampModesHeight(50f), 0.001f)
+        assertEquals(240f, NudgeSettings.clampModesHeight(400f), 0.001f)
+
+        assertEquals(10f, NudgeSettings.clampIconSizeDp(4f), 0.001f)
+        assertEquals(48f, NudgeSettings.clampIconSizeDp(50f), 0.001f)
+        assertEquals(14f, NudgeSettings.clampDndUnfocusedOffsetDp(5f), 0.001f)
+        assertEquals(90f, NudgeSettings.clampDndUnfocusedOffsetDp(100f), 0.001f)
+        assertEquals(0, NudgeSettings.clampFluidityPercent(-10))
+        assertEquals(100, NudgeSettings.clampFluidityPercent(150))
+        assertEquals(5, NudgeSettings.clampDeviceMaxVolumeSteps(2))
+        assertEquals(300, NudgeSettings.clampDeviceMaxVolumeSteps(500))
+
+        assertEquals(1L, NudgeSettings.clampDoubleTapTimeoutMs(0L))
+        assertEquals(500L, NudgeSettings.clampDoubleTapTimeoutMs(600L))
+        assertEquals(250L, NudgeSettings.clampDoubleTapTimeoutMs(250L))
+
+        assertEquals(1L, NudgeSettings.clampSimultaneousTimeoutMs(0L))
+        assertEquals(500L, NudgeSettings.clampSimultaneousTimeoutMs(600L))
+        assertEquals(120L, NudgeSettings.clampSimultaneousTimeoutMs(120L))
+
+        assertEquals(16f, NudgeSettings.clampActionsIconSpacingDp(10f), 0.001f)
+        assertEquals(64f, NudgeSettings.clampActionsIconSpacingDp(80f), 0.001f)
+        assertEquals(32f, NudgeSettings.clampActionsIconSpacingDp(32f), 0.001f)
+
+        assertEquals(0.10f, NudgeSettings.clampBezelYFraction(0.02f), 0.001f)
+        assertEquals(0.90f, NudgeSettings.clampBezelYFraction(0.98f), 0.001f)
+
+        assertEquals(160f, NudgeSettings.clampMixerPopupWidth(100f), 0.001f)
+        assertEquals(380f, NudgeSettings.clampMixerPopupWidth(500f), 0.001f)
+        assertEquals(170f, NudgeSettings.clampMixerPopupHeight(120f), 0.001f)
+        assertEquals(420f, NudgeSettings.clampMixerPopupHeight(600f), 0.001f)
+        assertEquals(24f, NudgeSettings.clampMixerPillWidth(10f), 0.001f)
+        assertEquals(72f, NudgeSettings.clampMixerPillWidth(100f), 0.001f)
+        assertEquals(70f, NudgeSettings.clampMixerPillHeight(40f), 0.001f)
+        assertEquals(240f, NudgeSettings.clampMixerPillHeight(300f), 0.001f)
+        assertEquals(2f, NudgeSettings.clampMixerPillSpacing(0f), 0.001f)
+        assertEquals(36f, NudgeSettings.clampMixerPillSpacing(50f), 0.001f)
+    }
+
+    @Test
+    fun customModesSerializationRoundTrip() {
+        val modes = listOf(
+            com.nudge.edge.model.CustomMode(
+                id = "test_mode",
+                label = "Gaming",
+                notificationKeyword = "NUDGE_MODE_GAMING",
+                iconKey = "Gamepad",
+                colorHex = 0xFFFF9500L,
+                dndMode = "PRIORITY",
+                ringerMode = "SILENT"
+            )
+        )
+        val serialized = com.nudge.edge.model.serializeCustomModes(modes)
+        val deserialized = com.nudge.edge.model.deserializeCustomModes(serialized)
+        assertEquals(1, deserialized.size)
+        assertEquals("test_mode", deserialized[0].id)
+        assertEquals("Gaming", deserialized[0].label)
+        assertEquals("NUDGE_MODE_GAMING", deserialized[0].notificationKeyword)
+        assertEquals("Gamepad", deserialized[0].iconKey)
+        assertEquals(0xFFFF9500L, deserialized[0].colorHex)
+        assertEquals("PRIORITY", deserialized[0].dndMode)
+        assertEquals("SILENT", deserialized[0].ringerMode)
+        assertEquals("Gaming", deserialized[0].name)
+        assertEquals("NUDGE_MODE_GAMING", deserialized[0].keyword)
+    }
+
+    @Test
+    fun bezelEdgeMapsCorrectlyToScreenEdge() {
+        assertEquals(ScreenEdge.LEFT, com.nudge.edge.model.BezelEdge.LEFT.toScreenEdge())
+        assertEquals(ScreenEdge.RIGHT, com.nudge.edge.model.BezelEdge.RIGHT.toScreenEdge())
+        assertEquals(ScreenEdge.TOP, com.nudge.edge.model.BezelEdge.TOP.toScreenEdge())
+        assertEquals(ScreenEdge.BOTTOM, com.nudge.edge.model.BezelEdge.BOTTOM.toScreenEdge())
+    }
+
+    @Test
+    fun volumeSliderOverlapDetectionCalculatesCorrectly() {
+        val settings = NudgeSettings(
+            popEdgeSide = EdgeSide.RIGHT,
+            hudSideSynced = true,
+            hudEdgeSide = EdgeSide.RIGHT,
+            volumeUpYFraction = 0.27f,
+            volumeDownYFraction = 0.37f,
+            hudYFraction = 0.30f,
+            hudHeightDp = 155f,
+            popHeightDp = 72f
+        )
+        val popEdge = EdgeOrientationMapper.resolvePhysicalEdge(settings.popEdgeSide, Surface.ROTATION_0)
+        val sliderEdge = EdgeOrientationMapper.resolveHudScreenEdge(settings, Surface.ROTATION_0)
+        assertEquals(ScreenEdge.RIGHT, popEdge)
+        assertEquals(ScreenEdge.RIGHT, sliderEdge)
+
+        val leftHudSettings = settings.copy(hudSideSynced = false, hudEdgeSide = EdgeSide.LEFT)
+        val leftSliderEdge = EdgeOrientationMapper.resolveHudScreenEdge(leftHudSettings, Surface.ROTATION_0)
+        assertEquals(ScreenEdge.LEFT, leftSliderEdge)
+        assertTrue(popEdge != leftSliderEdge)
     }
 
     @Test
@@ -194,16 +365,28 @@ class NudgeSettingsTest {
     }
 
     @Test
-    fun dynamicDeviceVolumeScaleSteppingWorksAcrossRanges() {
+    fun dynamicDeviceVolumeScaleSteppingWorksAccurately() {
+
         assertEquals(8, VolumeController.computeSteppedVolume(5, 1, 3, 0, 15))
         assertEquals(15, VolumeController.computeSteppedVolume(13, 1, 5, 0, 15))
         assertEquals(0, VolumeController.computeSteppedVolume(2, -1, 5, 0, 15))
 
-        assertEquals(77, VolumeController.computeSteppedVolume(70, 1, 7, 0, 150))
-        assertEquals(150, VolumeController.computeSteppedVolume(146, 1, 7, 0, 150))
-        assertEquals(65, VolumeController.computeSteppedVolume(72, -1, 7, 0, 150))
-
         assertEquals(55, VolumeController.computeSteppedVolume(50, 1, 5, 0, 100))
+
+        val step5First = VolumeController.computeSteppedVolume(0, 1, 5, 0, 150)
+        assertEquals(8, step5First)
+        val step5Second = VolumeController.computeSteppedVolume(step5First, 1, 5, 0, 150)
+        assertEquals(15, step5Second)
+
+        val step7First = VolumeController.computeSteppedVolume(0, 1, 7, 0, 150)
+        assertEquals(11, step7First)
+        val step7Second = VolumeController.computeSteppedVolume(step7First, 1, 7, 0, 150)
+        assertEquals(21, step7Second)
+
+        val step10First = VolumeController.computeSteppedVolume(0, 1, 10, 0, 150)
+        assertEquals(15, step10First)
+        val step10Second = VolumeController.computeSteppedVolume(step10First, 1, 10, 0, 150)
+        assertEquals(30, step10Second)
     }
 
     @Test
@@ -264,5 +447,36 @@ class NudgeSettingsTest {
         assertEquals(defaults.hudWidthDp + 6.0f, computeHudCutoutThicknessDp(defaults.hudWidthDp, defaults.hudEdgeInsetDp), 0.001f)
         assertEquals(defaults.hudWidthDp + 12f + 6.0f, computeHudCutoutThicknessDp(defaults.hudWidthDp, 12f), 0.001f)
         assertEquals(drawnSpanDp + (22f + 6.0f) * 2f, computeHudOuterSpanDp(defaults.hudHeightDp), 0.001f)
+    }
+
+    @Test
+    fun dndAndModesOuterSpanFormulasMatchFilletSpec() {
+        assertEquals(34f, DND_BEZEL_FILLET_DP, 0.001f)
+        assertEquals(34f, MODES_BEZEL_FILLET_DP, 0.001f)
+
+        assertEquals(108f + 68f, computeDndOuterSpanDp(108f), 0.001f)
+        assertEquals(148f + 68f, computeModesOuterSpanDp(148f), 0.001f)
+    }
+
+    @Test
+    fun appModesMatchSamsungKeywords() {
+        assertEquals("NUDGE_MODE_NORMAL", AppMode.NORMAL.keyword)
+        assertEquals("NUDGE_MODE_SILENT", AppMode.SILENT.keyword)
+        assertEquals("NUDGE_MODE_SLEEP", AppMode.SLEEP.keyword)
+        assertEquals("NUDGE_MODE_WORK", AppMode.WORK.keyword)
+        assertEquals("NUDGE_MODE_PERSONAL", AppMode.PERSONAL.keyword)
+    }
+
+    @Test
+    fun hardwareTriggersCountAndEntriesMatch10Options() {
+        assertEquals(8, HardwareTrigger.entries.size)
+        assertTrue(HardwareTrigger.entries.contains(HardwareTrigger.NONE))
+        assertTrue(HardwareTrigger.entries.contains(HardwareTrigger.BOTH_VOLUME_SHORT))
+        assertTrue(HardwareTrigger.entries.contains(HardwareTrigger.DOUBLE_TAP_VOL_UP))
+        assertTrue(HardwareTrigger.entries.contains(HardwareTrigger.DOUBLE_TAP_VOL_DOWN))
+        assertTrue(HardwareTrigger.entries.contains(HardwareTrigger.LONG_PRESS_POWER))
+        assertTrue(HardwareTrigger.entries.contains(HardwareTrigger.CUSTOM_BTN_SINGLE))
+        assertTrue(HardwareTrigger.entries.contains(HardwareTrigger.CUSTOM_BTN_DOUBLE))
+        assertTrue(HardwareTrigger.entries.contains(HardwareTrigger.CUSTOM_BTN_LONG))
     }
 }

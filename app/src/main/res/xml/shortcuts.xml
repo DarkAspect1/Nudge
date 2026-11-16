@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="shortcut_actions"
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher_foreground"
+        android:shortcutShortLabel="@string/shortcut_actions_short"
+        android:shortcutLongLabel="@string/shortcut_actions_long">
+        <intent
+            android:action="com.nudge.edge.action.OPEN_ACTIONS"
+            android:targetPackage="com.nudge.edge"
+            android:targetClass="com.nudge.edge.service.ShortcutActionsActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="shortcut_dnd"
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher_foreground"
+        android:shortcutShortLabel="@string/shortcut_dnd_short"
+        android:shortcutLongLabel="@string/shortcut_dnd_long">
+        <intent
+            android:action="com.nudge.edge.action.OPEN_DND"
+            android:targetPackage="com.nudge.edge"
+            android:targetClass="com.nudge.edge.service.ShortcutDndActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="shortcut_volume"
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher_foreground"
+        android:shortcutShortLabel="@string/shortcut_volume_short"
+        android:shortcutLongLabel="@string/shortcut_volume_long">
+        <intent
+            android:action="com.nudge.edge.action.OPEN_VOLUME"
+            android:targetPackage="com.nudge.edge"
+            android:targetClass="com.nudge.edge.service.ShortcutVolumeActivity" />
+    </shortcut>
+</shortcuts>

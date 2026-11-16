@@ -1,8 +1,10 @@
 package com.nudge.edge.data
 
+import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.os.SystemClock
@@ -292,17 +294,57 @@ class VolumeController(context: Context) {
         }
     }
 
+    fun getActiveStreamType(): Int {
+        val mode = audioManager.mode
+        val inCall = mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION
+        val isMediaPlayingNow = audioManager.isMusicActive
+        return when {
+            inCall && isMediaPlayingNow -> AudioManager.STREAM_MUSIC
+            inCall && !isMediaPlayingNow -> AudioManager.STREAM_VOICE_CALL
+            mode == AudioManager.MODE_RINGTONE -> AudioManager.STREAM_RING
+            else -> AudioManager.STREAM_MUSIC
+        }
+    }
+
+    fun detectTrueDeviceMaxSteps(streamType: Int = AudioManager.STREAM_MUSIC): Int {
+        val rawMin = getStreamMin(streamType)
+        val rawMax = getStreamMax(streamType)
+        val span = rawMax - rawMin
+        if (span >= 50) {
+            return span
+        }
+        if (isSoundAssistantInstalled() || hasSettingsFineScaleIndicator(rawMax)) {
+            return 150
+        }
+        return 100
+    }
+
+    fun isCallActive(): Boolean {
+        val mode = audioManager.mode
+        return mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION
+    }
+
     fun getStreamMin(streamType: Int): Int {
+        val safeStream = if (streamType == STREAM_BLUETOOTH_SCO) AudioManager.STREAM_VOICE_CALL else streamType
+        if (safeStream == AudioManager.STREAM_VOICE_CALL) {
+            val min = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                runCatching { audioManager.getStreamMinVolume(AudioManager.STREAM_VOICE_CALL) }.getOrDefault(1)
+            } else {
+                1
+            }
+            return min.coerceAtLeast(1)
+        }
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            audioManager.getStreamMinVolume(streamType)
+            runCatching { audioManager.getStreamMinVolume(safeStream) }.getOrDefault(0)
         } else {
             0
         }
     }
 
     fun getStreamMax(streamType: Int): Int {
-        val publicMax = audioManager.getStreamMaxVolume(streamType).coerceAtLeast(1)
-        if (streamType == AudioManager.STREAM_MUSIC) {
+        val safeStream = if (streamType == STREAM_BLUETOOTH_SCO) AudioManager.STREAM_VOICE_CALL else streamType
+        val publicMax = runCatching { audioManager.getStreamMaxVolume(safeStream) }.getOrDefault(15).coerceAtLeast(1)
+        if (safeStream == AudioManager.STREAM_MUSIC) {
             return getMusicMaxVolume()
         }
         return publicMax
@@ -380,7 +422,23 @@ class VolumeController(context: Context) {
         val max = getStreamMax(streamType)
         val clamped = targetIndex.coerceIn(min, max)
         val publicMax = audioManager.getStreamMaxVolume(streamType).coerceAtLeast(1)
-        val flags = if (showSystemUi) AudioManager.FLAG_SHOW_UI else 0
+        val flags = 0
+
+        if ((streamType == AudioManager.STREAM_RING || streamType == AudioManager.STREAM_NOTIFICATION) && clamped > 0) {
+            if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL) {
+                runCatching {
+                    audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+                }
+            }
+            val notifManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            if (notifManager != null && notifManager.isNotificationPolicyAccessGranted) {
+                if (notifManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL) {
+                    runCatching {
+                        notifManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+                    }
+                }
+            }
+        }
 
         if (streamType == AudioManager.STREAM_MUSIC && max > publicMax) {
             val currentFine = knownCurrent ?: getStreamVolume(streamType)
@@ -401,13 +459,19 @@ class VolumeController(context: Context) {
             return clamped
         }
 
-        val current = knownCurrent ?: audioManager.getStreamVolume(streamType)
+        val safeStream = if (streamType == STREAM_BLUETOOTH_SCO) AudioManager.STREAM_VOICE_CALL else streamType
+        val current = knownCurrent ?: runCatching { audioManager.getStreamVolume(safeStream) }.getOrDefault(0)
         if (clamped != current || showSystemUi) {
             val result = runCatching {
-                audioManager.setStreamVolume(streamType, clamped, flags)
+                audioManager.setStreamVolume(safeStream, clamped, flags)
             }
             if (result.isFailure) {
                 return current
+            }
+        }
+        if (safeStream == AudioManager.STREAM_VOICE_CALL) {
+            runCatching {
+                audioManager.setStreamVolume(STREAM_BLUETOOTH_SCO, clamped, 0)
             }
         }
         return clamped
@@ -476,17 +540,19 @@ class VolumeController(context: Context) {
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 val attrs = VibrationAttributes.Builder()
-                    .setUsage(VibrationAttributes.USAGE_ACCESSIBILITY)
+                    .setUsage(VibrationAttributes.USAGE_TOUCH)
                     .build()
                 vibrator.vibrate(effect, attrs)
             } else {
                 @Suppress("DEPRECATION")
                 val audioAttrs = AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build()
                 vibrator.vibrate(effect, audioAttrs)
             }
+        }.recoverCatching {
+            vibrator.vibrate(effect)
         }
     }
 
@@ -510,21 +576,73 @@ class VolumeController(context: Context) {
         return VibrationEffect.createOneShot(duration, VibrationEffect.DEFAULT_AMPLITUDE)
     }
 
+    fun isBluetoothAudioConnected(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val devices = runCatching { audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS) }.getOrNull()
+            if (devices != null) {
+                return devices.any { isBluetoothOutputDevice(it.type) }
+            }
+        }
+        @Suppress("DEPRECATION")
+        return audioManager.isBluetoothA2dpOn || audioManager.isBluetoothScoOn
+    }
+
+    private fun isBluetoothOutputDevice(type: Int): Boolean {
+        return when (type) {
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> true
+            else -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && type == AudioDeviceInfo.TYPE_HEARING_AID) {
+                    true
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && (
+                    type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                    type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
+                    type == AudioDeviceInfo.TYPE_BLE_BROADCAST
+                )) {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
     companion object {
+        const val STREAM_BLUETOOTH_SCO = 6
+
         fun computeSteppedVolume(
             currentVolume: Int,
             direction: Int,
             volumeStep: Int,
             minVolume: Int,
-            maxVolume: Int
+            maxVolume: Int,
+            scaleSteps: Int = 100
         ): Int {
-            val step = volumeStep.coerceIn(1, 10)
             val sign = when {
                 direction > 0 -> 1
                 direction < 0 -> -1
                 else -> 0
             }
-            return (currentVolume + sign * step).coerceIn(minVolume, maxVolume)
+            if (sign == 0) return currentVolume
+            val span = (maxVolume - minVolume).coerceAtLeast(1)
+            val effectiveScale = if (scaleSteps in 5..200) scaleSteps else 100
+            val step = volumeStep.coerceIn(1, 20)
+            return if (span > 15) {
+                val currentRatio = (currentVolume - minVolume).toFloat() / span.toFloat()
+                val stepRatio = step.toFloat() / effectiveScale.toFloat()
+                val currentStepIndex = (currentRatio / stepRatio).roundToInt()
+                val nextStepIndex = currentStepIndex + sign
+                val nextRatio = (nextStepIndex * stepRatio).coerceIn(0f, 1f)
+                var nextVol = minVolume + (nextRatio * span.toFloat()).roundToInt()
+                if (sign > 0 && nextVol <= currentVolume && currentVolume < maxVolume) {
+                    nextVol = currentVolume + 1
+                } else if (sign < 0 && nextVol >= currentVolume && currentVolume > minVolume) {
+                    nextVol = currentVolume - 1
+                }
+                nextVol.coerceIn(minVolume, maxVolume)
+            } else {
+                (currentVolume + sign * step).coerceIn(minVolume, maxVolume)
+            }
         }
     }
 }

@@ -1,4 +1,4 @@
-package com.nudge.edge.model
+﻿package com.nudge.edge.model
 
 import android.view.Surface
 import kotlin.math.roundToInt

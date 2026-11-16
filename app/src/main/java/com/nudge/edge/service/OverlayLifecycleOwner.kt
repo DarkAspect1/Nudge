@@ -1,4 +1,4 @@
-package com.nudge.edge.service
+﻿package com.nudge.edge.service
 
 import android.view.View
 import androidx.lifecycle.Lifecycle
@@ -36,6 +36,18 @@ class OverlayLifecycleOwner : LifecycleOwner, SavedStateRegistryOwner, ViewModel
     fun onAttached() {
         if (lifecycleRegistry.currentState == Lifecycle.State.CREATED) {
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        }
+    }
+
+    fun ensureResumed() {
+        if (lifecycleRegistry.currentState == Lifecycle.State.INITIALIZED) {
+            performCreate()
+        }
+        if (lifecycleRegistry.currentState == Lifecycle.State.CREATED) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        }
+        if (lifecycleRegistry.currentState == Lifecycle.State.STARTED) {
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         }
     }

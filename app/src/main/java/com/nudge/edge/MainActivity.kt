@@ -34,11 +34,17 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.lifecycleScope
+import com.nudge.edge.data.GitHubUpdateManager
 import com.nudge.edge.data.SettingsRepository
 import com.nudge.edge.data.VolumeController
+import com.nudge.edge.model.LivePreviewController
+import com.nudge.edge.model.PreviewTarget
 import com.nudge.edge.service.NudgeAccessibilityService
+import com.nudge.edge.service.ShizukuManager
 import com.nudge.edge.ui.settings.MainScreen
 import com.nudge.edge.ui.theme.NudgeTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -60,12 +66,19 @@ class MainActivity : ComponentActivity() {
 
         settingsRepository = SettingsRepository.getInstance(this)
         volumeController = VolumeController(this)
+        ShizukuManager.init(this)
 
         setContent {
             val context = LocalContext.current
             val lifecycleOwner = LocalLifecycleOwner.current
             val settings by settingsRepository.settings.collectAsState()
-            val previewTarget by settingsRepository.previewTarget.collectAsState()
+            val repoPreviewTarget by settingsRepository.previewTarget.collectAsState()
+            val livePreviewState by LivePreviewController.state.collectAsState()
+            val previewTarget = if (livePreviewState.activeTarget != PreviewTarget.NONE) {
+                livePreviewState.activeTarget
+            } else {
+                repoPreviewTarget
+            }
             val preferencesLoaded by settingsRepository.preferencesLoaded.collectAsState()
             val lastPromptedVersion by settingsRepository.lastPromptedAccessibilityVersion.collectAsState()
             val serviceRunning by NudgeAccessibilityService.isServiceRunning.collectAsState()
@@ -95,6 +108,10 @@ class MainActivity : ComponentActivity() {
                             musicVolumeFraction = volumeController.getMusicVolumeFraction()
                             screenDimsDp = readRealScreenMetricsDp(context)
                             displayRotation = readDisplayRotation(context)
+                            ShizukuManager.checkStatus(context)
+                            if (BuildConfig.ENABLE_UPDATER) {
+                                GitHubUpdateManager.getInstance(context, settingsRepository, lifecycleScope).onActivityResume()
+                            }
                         }
                         Lifecycle.Event.ON_PAUSE -> {
                             settingsRepository.clearLivePreview()
@@ -185,6 +202,25 @@ class MainActivity : ComponentActivity() {
                     }
                 )
             }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (BuildConfig.ENABLE_UPDATER) {
+            val updateManager = GitHubUpdateManager.getInstance(this, settingsRepository, lifecycleScope)
+            updateManager.checkIfDue(
+                settingsRepository.settings.value.updateCheckFrequency,
+                settingsRepository.settings.value.lastUpdateCheckTimestampMs
+            )
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (BuildConfig.ENABLE_UPDATER) {
+            val updateManager = GitHubUpdateManager.getInstance(this, settingsRepository, lifecycleScope)
+            updateManager.onActivityResume()
         }
     }
 

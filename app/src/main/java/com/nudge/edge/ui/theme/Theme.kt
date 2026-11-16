@@ -1,4 +1,4 @@
-package com.nudge.edge.ui.theme
+﻿package com.nudge.edge.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
