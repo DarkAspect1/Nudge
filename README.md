@@ -18,8 +18,6 @@ The app shows edge pops when you press the volume or power buttons and includes 
 - **Custom volume slider:** inspired by a concept design that was originally made for Iphones has now become a reality for Androids LOL.
   Customize its width, height, position, corners rounding, edge inset, and timeout, with an option for floating.
 
-## Features
-
 ### Actions Tab
 - **DND/Silent panel:** change between two modes either silent and normal or dnd on/off. customization over width, height, position, timeout, even the unfocused icon placement, and selected side you want in both portrait and landscape mode.
 - **Modes/Actions panel:** same customization as DND/Silent panel. add new custom modes with custom icons/colors/names or even edit the existing ones and change their order like how you want it to be! **How it works:** it sends a quick silent notification that can be used by different automation/routine apps to do the functionality you want. or even better, for automation apps specifically that can receive broadcasts, the app sends a broadcast when a mode is selected alongside the silent notification (there's a guide in the app for detailed info) 
