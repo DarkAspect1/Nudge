@@ -21,8 +21,10 @@ The app shows edge pops when you press the volume or power buttons, volume slide
 - **Audio Mixer:** Option to change its position on X & Y axis and a scale to make it bigger/smaller. there's also an option to attach it to the volume slider or leave it floating.
   
 - **DND/Silent panel:** change between two modes either silent and normal or dnd on/off. customization over width, height, position, timeout, even the unfocused icon placement, and selected side you want in both portrait and landscape mode.
-- **Modes/Actions panel:** same customization as DND/Silent panel. add new custom modes with custom icons/colors/names or even edit the existing ones and change their order like how you want it to be! **How it works:** it sends a quick silent notification that can be used by different automation/routine apps to do the functionality you want. or even better, for automation apps specifically that can receive broadcasts, the app sends a broadcast when a mode is selected alongside the silent notification (there's a guide in the app for detailed info) 
-- **Both panels are triggered using side buttons** with up to 7 different combinations (custom buttons included for devices that has an additional button)
+  
+- **Modes/Actions panel:** same customization as DND/Silent panel. add new custom modes with custom icons/colors/names or even edit the existing ones and change their order like how you want it to be! **How it works:** it sends a quick silent notification that can be used by different automation/routine apps to do the functionality you want. or even better, for automation apps specifically that can receive broadcasts, the app sends a broadcast when a mode is selected alongside the silent notification (there's a guide in the app for detailed info)
+  
+- **Both panels are triggered using side buttons** with up to 7 different combinations (custom buttons included for devices that has an additional button). When the panels are open, you can switch between modes using volume buttons or gesture swiping!
 
 - **New volume system** that reads your phone volume steps, multiplies it by 10 and here you go with 150, 250, or 300 steps! (pretty easy right? i got cooked implementing this)
 - **Individual app volume is here!** options to choose from are showing it alongside volume slider or only in audio mixer (its optional mode) **Must note that it uses Shizuku**
