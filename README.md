@@ -46,7 +46,12 @@ The app shows edge pops when you press the volume or power buttons, volume slide
 
 - **Method 1: Manually:** Users on Android 13+ after installing, go to Settings, Apps, Nudge, 3 dots menu on top right corner (⋮), Allow restricted settings so the accessibility toggle isn't grayed out for the app. now go back to accessibility page and enable it.
 - **Method 2: Automatically via Shizuku in-app**
+
+## Banking app shows a warning about Nudge?
+
+- **WHY it happens:** Because the app is installed from outside the playstore and has accessibility permission, and since banking apps has a hardened system of checking the device for potential security threats, it will see that the app might be dangerous and shows a warning or refuses to open. (yes, accessibility service might be dangerous if its **misused** because it allows the app that has the accessibility permission to control the screen. **However, my app only needs it to display overlays of like volume slider, dnd and actions panels**)
+- **How to bypass the warning: Requires Shizuku:** Grant shizuku permission in settings tab, manage cloaked apps, select your banking app and hit done.
   
- ## Two variants of the app
+## Two variants of the app
 - Online variant has internet permission, shows app updates and checks for them in selected periods or manually, and provides in-app updates.
 - Offline variant doesnt show updates at all and doesnt have internet permission
