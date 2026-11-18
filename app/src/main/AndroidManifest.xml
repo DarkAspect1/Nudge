@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -16,6 +17,10 @@
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
         </intent>
         <package android:name="moe.shizuku.privileged.api" />
         <package android:name="com.samsung.android.soundassistant" />
@@ -51,13 +56,11 @@
         </activity>
 
         <activity
-            android:name=".service.NudgePowerTriggerActivity"
+            android:name=".service.NudgeAssistActivity"
             android:taskAffinity=""
-            android:launchMode="singleInstance"
             android:excludeFromRecents="true"
             android:noHistory="true"
-            android:stateNotNeeded="true"
-            android:theme="@android:style/Theme.NoDisplay"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.ASSIST" />
@@ -67,11 +70,36 @@
                 <action android:name="android.intent.action.VOICE_COMMAND" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+        </activity>
+
+        <service
+            android:name=".service.NudgeVoiceInteractionService"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true">
             <intent-filter>
-                <action android:name="com.nudge.edge.ACTION_TRIGGER_POWER_HOLD" />
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/nudge_voice_interaction" />
+        </service>
+
+        <service
+            android:name=".service.NudgeVoiceInteractionSessionService"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true" />
+
+        <service
+            android:name=".service.NudgeRecognitionService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-        </activity>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/nudge_recognition_service" />
+        </service>
 
         <activity
             android:name=".service.ShortcutActionsActivity"

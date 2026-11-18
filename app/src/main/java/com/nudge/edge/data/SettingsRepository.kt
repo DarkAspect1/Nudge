@@ -14,12 +14,21 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.nudge.edge.model.BezelEdge
 import com.nudge.edge.model.CustomMode
 import com.nudge.edge.model.DndModeType
+import com.nudge.edge.model.EdgePopStyle
 import com.nudge.edge.model.EdgeSide
+import com.nudge.edge.model.HardwareKeyTrigger
 import com.nudge.edge.model.HardwareTrigger
+import com.nudge.edge.model.TriggerSource
 import com.nudge.edge.model.HudTriggerMode
 import com.nudge.edge.model.NudgeSettings
 import com.nudge.edge.model.PreviewTarget
 import com.nudge.edge.model.ScreenEdge
+import com.nudge.edge.model.PersistentNudge
+import com.nudge.edge.model.deserializePersistentNudges
+import com.nudge.edge.model.serializePersistentNudges
+import com.nudge.edge.model.NudgeMenuApp
+import com.nudge.edge.model.deserializeNudgeMenuApps
+import com.nudge.edge.model.serializeNudgeMenuApps
 import com.nudge.edge.model.deserializeCustomModes
 import com.nudge.edge.model.serializeCustomModes
 import kotlinx.coroutines.CoroutineScope
@@ -55,9 +64,10 @@ class SettingsRepository private constructor(context: Context) {
         val POWER_BUTTON_Y = floatPreferencesKey("power_button_y")
         val POWER_POP_WIDTH_DP = floatPreferencesKey("power_pop_width_dp")
         val POWER_POP_HEIGHT_DP = floatPreferencesKey("power_pop_height_dp")
+        val EDGE_POP_STYLE = stringPreferencesKey("edge_pop_style")
+        val EDGE_POP_FLAT_TOP_GLOW_ENABLED = booleanPreferencesKey("edge_pop_flat_top_glow_enabled")
         val ENABLE_VOLUME_SLIDER_HUD = booleanPreferencesKey("enable_volume_slider_hud")
         val SHOW_SYSTEM_PANEL_WHEN_HUD_OFF = booleanPreferencesKey("show_system_panel_when_hud_off")
-        val VOLUME_STEP = intPreferencesKey("volume_step")
         val HUD_SIDE_SYNCED = booleanPreferencesKey("hud_side_synced")
         val HUD_EDGE_SIDE = stringPreferencesKey("hud_edge_side")
         val HUD_Y = floatPreferencesKey("hud_y")
@@ -117,10 +127,13 @@ class SettingsRepository private constructor(context: Context) {
         val MODES_HEIGHT_DP = floatPreferencesKey("modes_height_dp")
         val CUSTOM_MODES_JSON = stringPreferencesKey("custom_modes_json")
         val POWER_ASSISTANT_CONFIGURED = booleanPreferencesKey("power_assistant_configured")
+        val ENABLE_SHIZUKU_POWER_HOLD_FALLBACK = booleanPreferencesKey("enable_shizuku_power_hold_fallback")
 
+        val CUSTOM_BUTTON_SOURCE = stringPreferencesKey("custom_button_source")
         val CUSTOM_BUTTON_KEY_CODE = intPreferencesKey("custom_button_key_code")
         val CUSTOM_BUTTON_SCAN_CODE = intPreferencesKey("custom_button_scan_code")
         val CUSTOM_BUTTON_LABEL = stringPreferencesKey("custom_button_label")
+        val CUSTOM_BUTTON_DEVICE_NAME = stringPreferencesKey("custom_button_device_name")
 
         val IS_HIDE_ACCESSIBILITY_ENABLED = booleanPreferencesKey("is_hide_accessibility_enabled")
         val CLOAKED_PACKAGES = stringSetPreferencesKey("cloaked_packages")
@@ -128,8 +141,10 @@ class SettingsRepository private constructor(context: Context) {
 
         val EDGE_POP_HAPTICS_ENABLED = booleanPreferencesKey("edge_pop_haptics_enabled")
         val VOLUME_SLIDER_HAPTICS_ENABLED = booleanPreferencesKey("volume_slider_haptics_enabled")
+        val SOUND_ICON_MODE_SWITCH_HAPTICS_ENABLED = booleanPreferencesKey("sound_icon_mode_switch_haptics_enabled")
         val DND_PANEL_HAPTICS_ENABLED = booleanPreferencesKey("dnd_panel_haptics_enabled")
         val ACTIONS_PANEL_HAPTICS_ENABLED = booleanPreferencesKey("actions_panel_haptics_enabled")
+        val NUDGE_HAPTICS_ENABLED = booleanPreferencesKey("nudge_haptics_enabled")
 
         val DND_ICON_SIZE_DP = floatPreferencesKey("dnd_icon_size_dp")
         val ACTIONS_ICON_SIZE_DP = floatPreferencesKey("actions_icon_size_dp")
@@ -163,6 +178,22 @@ class SettingsRepository private constructor(context: Context) {
         val IS_AUDIO_MIXER_MANUALLY_SIZED = booleanPreferencesKey("is_audio_mixer_manually_sized")
         val SHOW_DND_LABEL = booleanPreferencesKey("show_dnd_label")
         val SHOW_ACTIONS_LABEL = booleanPreferencesKey("show_actions_label")
+        val VOLUME_SLIDER_PILL_TRANSPARENCY = intPreferencesKey("volume_slider_pill_transparency")
+        val VOLUME_SLIDER_BLUR = floatPreferencesKey("volume_slider_blur")
+        val VOLUME_SLIDER_PILL_BLUR_DP = floatPreferencesKey("volume_slider_pill_blur_dp")
+        val USE_SHIZUKU_FOR_DND = booleanPreferencesKey("use_shizuku_for_dnd")
+        val ENABLE_PERSISTENT_NUDGES = booleanPreferencesKey("enable_persistent_nudges")
+        val PERSISTENT_NUDGES_JSON = stringPreferencesKey("persistent_nudges_json")
+        val NUDGE_WIDTH_DP = floatPreferencesKey("nudge_width_dp")
+        val NUDGE_HEIGHT_DP = floatPreferencesKey("nudge_height_dp")
+        val NUDGE_GLOW_ENABLED = booleanPreferencesKey("nudge_glow_enabled")
+        val NUDGE_MENU_WIDTH_DP = floatPreferencesKey("nudge_menu_width_dp")
+        val NUDGE_MENU_HEIGHT_DP = floatPreferencesKey("nudge_menu_height_dp")
+        val NUDGE_MENU_X_FRACTION = floatPreferencesKey("nudge_menu_x_fraction")
+        val NUDGE_MENU_Y_FRACTION = floatPreferencesKey("nudge_menu_y_fraction")
+        val NUDGE_MENU_EDGE = stringPreferencesKey("nudge_menu_edge")
+        val ENABLE_THIN_VOLUME_HUD = booleanPreferencesKey("enable_thin_volume_hud")
+        val NUDGE_MENU_APPS_JSON = stringPreferencesKey("nudge_menu_apps_json")
     }
 
     private val _settings = MutableStateFlow(NudgeSettings())
@@ -233,13 +264,14 @@ class SettingsRepository private constructor(context: Context) {
             powerPopHeightDp = NudgeSettings.clampPopHeight(
                 prefs[Keys.POWER_POP_HEIGHT_DP] ?: defaults.powerPopHeightDp
             ),
+            edgePopStyle = prefs[Keys.EDGE_POP_STYLE]?.let {
+                runCatching { EdgePopStyle.valueOf(it) }.getOrNull()
+            } ?: defaults.edgePopStyle,
+            edgePopFlatTopGlowEnabled = prefs[Keys.EDGE_POP_FLAT_TOP_GLOW_ENABLED] ?: defaults.edgePopFlatTopGlowEnabled,
             enableVolumeSliderHud =
                 prefs[Keys.ENABLE_VOLUME_SLIDER_HUD] ?: defaults.enableVolumeSliderHud,
             showSystemPanelWhenHudOff =
                 prefs[Keys.SHOW_SYSTEM_PANEL_WHEN_HUD_OFF] ?: defaults.showSystemPanelWhenHudOff,
-            volumeStep = NudgeSettings.clampVolumeStep(
-                prefs[Keys.VOLUME_STEP] ?: defaults.volumeStep
-            ),
             isPerAppVolumeEnabled = prefs[Keys.IS_PER_APP_VOLUME_ENABLED] ?: defaults.isPerAppVolumeEnabled,
             perAppVolumeDisplayMode = prefs[Keys.PER_APP_VOLUME_DISPLAY_MODE] ?: defaults.perAppVolumeDisplayMode,
             updateCheckFrequency = prefs[Keys.UPDATE_CHECK_FREQUENCY] ?: defaults.updateCheckFrequency,
@@ -269,6 +301,9 @@ class SettingsRepository private constructor(context: Context) {
             hudCornerRadiusDp = NudgeSettings.clampHudCornerRadius(
                 prefs[Keys.HUD_CORNER_RADIUS_DP] ?: defaults.hudCornerRadiusDp
             ),
+            volumeSliderPillTransparency = prefs[Keys.VOLUME_SLIDER_PILL_TRANSPARENCY]?.coerceIn(0, 100) ?: defaults.volumeSliderPillTransparency,
+            volumeSliderBlur = prefs[Keys.VOLUME_SLIDER_BLUR]?.coerceIn(0f, 1f) ?: defaults.volumeSliderBlur,
+            volumeSliderPillBlurDp = prefs[Keys.VOLUME_SLIDER_PILL_BLUR_DP]?.coerceIn(0f, 30f) ?: defaults.volumeSliderPillBlurDp,
             hudAutoHideMs = NudgeSettings.clampAutoHideMs(
                 prefs[Keys.HUD_AUTO_HIDE_MS] ?: defaults.hudAutoHideMs
             ),
@@ -289,11 +324,14 @@ class SettingsRepository private constructor(context: Context) {
             hudEdgeInsetDp = NudgeSettings.clampHudEdgeInset(
                 prefs[Keys.HUD_EDGE_INSET_DP] ?: defaults.hudEdgeInsetDp
             ),
+            enableThinVolumeHud = prefs[Keys.ENABLE_THIN_VOLUME_HUD] ?: defaults.enableThinVolumeHud,
             hapticsEnabled = prefs[Keys.HAPTICS_ENABLED] ?: defaults.hapticsEnabled,
             edgePopHapticsEnabled = prefs[Keys.EDGE_POP_HAPTICS_ENABLED] ?: defaults.edgePopHapticsEnabled,
             volumeSliderHapticsEnabled = prefs[Keys.VOLUME_SLIDER_HAPTICS_ENABLED] ?: defaults.volumeSliderHapticsEnabled,
+            soundIconModeSwitchHapticsEnabled = prefs[Keys.SOUND_ICON_MODE_SWITCH_HAPTICS_ENABLED] ?: defaults.soundIconModeSwitchHapticsEnabled,
             dndPanelHapticsEnabled = prefs[Keys.DND_PANEL_HAPTICS_ENABLED] ?: defaults.dndPanelHapticsEnabled,
             actionsPanelHapticsEnabled = prefs[Keys.ACTIONS_PANEL_HAPTICS_ENABLED] ?: defaults.actionsPanelHapticsEnabled,
+            nudgeHapticsEnabled = prefs[Keys.NUDGE_HAPTICS_ENABLED] ?: defaults.nudgeHapticsEnabled,
             lightMode = prefs[Keys.LIGHT_MODE] ?: defaults.lightMode,
 
             audioMixerPopupWidthDp = NudgeSettings.clampAudioMixerPopupWidth(
@@ -328,6 +366,7 @@ class SettingsRepository private constructor(context: Context) {
             dndModeType = prefs[Keys.DND_MODE_TYPE]?.let {
                 runCatching { DndModeType.valueOf(it) }.getOrNull()
             } ?: defaults.dndModeType,
+            useShizukuForDnd = prefs[Keys.USE_SHIZUKU_FOR_DND] ?: defaults.useShizukuForDnd,
             dndTrigger = prefs[Keys.DND_TRIGGER]?.let {
                 runCatching { HardwareTrigger.valueOf(it) }.getOrNull()
             } ?: defaults.dndTrigger,
@@ -415,11 +454,25 @@ class SettingsRepository private constructor(context: Context) {
             ),
             showActionsLabel = prefs[Keys.SHOW_ACTIONS_LABEL] ?: defaults.showActionsLabel,
             customModes = deserializeCustomModes(prefs[Keys.CUSTOM_MODES_JSON]),
+            enablePersistentNudges = prefs[Keys.ENABLE_PERSISTENT_NUDGES] ?: defaults.enablePersistentNudges,
+            persistentNudges = deserializePersistentNudges(prefs[Keys.PERSISTENT_NUDGES_JSON]),
+            nudgeWidthDp = prefs[Keys.NUDGE_WIDTH_DP] ?: defaults.nudgeWidthDp,
+            nudgeHeightDp = prefs[Keys.NUDGE_HEIGHT_DP] ?: defaults.nudgeHeightDp,
+            nudgeGlowEnabled = prefs[Keys.NUDGE_GLOW_ENABLED] ?: defaults.nudgeGlowEnabled,
+            nudgeMenuWidthDp = prefs[Keys.NUDGE_MENU_WIDTH_DP] ?: defaults.nudgeMenuWidthDp,
+            nudgeMenuHeightDp = prefs[Keys.NUDGE_MENU_HEIGHT_DP] ?: defaults.nudgeMenuHeightDp,
+            nudgeMenuXFraction = prefs[Keys.NUDGE_MENU_X_FRACTION] ?: defaults.nudgeMenuXFraction,
+            nudgeMenuYFraction = prefs[Keys.NUDGE_MENU_Y_FRACTION] ?: defaults.nudgeMenuYFraction,
+            nudgeMenuEdge = prefs[Keys.NUDGE_MENU_EDGE]?.let { runCatching { ScreenEdge.valueOf(it) }.getOrNull() } ?: defaults.nudgeMenuEdge,
             powerAssistantConfigured = prefs[Keys.POWER_ASSISTANT_CONFIGURED] ?: defaults.powerAssistantConfigured,
+            enableShizukuPowerHoldFallback = prefs[Keys.ENABLE_SHIZUKU_POWER_HOLD_FALLBACK] ?: defaults.enableShizukuPowerHoldFallback,
+            nudgeMenuApps = deserializeNudgeMenuApps(prefs[Keys.NUDGE_MENU_APPS_JSON]),
 
+            customButtonSource = prefs[Keys.CUSTOM_BUTTON_SOURCE] ?: defaults.customButtonSource,
             customButtonKeyCode = prefs[Keys.CUSTOM_BUTTON_KEY_CODE] ?: defaults.customButtonKeyCode,
             customButtonScanCode = prefs[Keys.CUSTOM_BUTTON_SCAN_CODE] ?: defaults.customButtonScanCode,
             customButtonLabel = prefs[Keys.CUSTOM_BUTTON_LABEL] ?: defaults.customButtonLabel,
+            customButtonDeviceName = prefs[Keys.CUSTOM_BUTTON_DEVICE_NAME] ?: defaults.customButtonDeviceName,
 
             isHideAccessibilityEnabled = prefs[Keys.IS_HIDE_ACCESSIBILITY_ENABLED] ?: defaults.isHideAccessibilityEnabled,
             cloakedPackages = prefs[Keys.CLOAKED_PACKAGES] ?: defaults.cloakedPackages,
@@ -543,6 +596,24 @@ class SettingsRepository private constructor(context: Context) {
         }
     }
 
+    fun setEdgePopStyle(style: EdgePopStyle) {
+        if (_settings.value.edgePopStyle == style) return
+        _settings.value = _settings.value.copy(edgePopStyle = style)
+        requestLivePreview(PreviewTarget.POP_BOTH)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.EDGE_POP_STYLE] = style.name }
+        }
+    }
+
+    fun setEdgePopFlatTopGlowEnabled(enabled: Boolean) {
+        if (_settings.value.edgePopFlatTopGlowEnabled == enabled) return
+        _settings.value = _settings.value.copy(edgePopFlatTopGlowEnabled = enabled)
+        requestLivePreview(PreviewTarget.POP_BOTH)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.EDGE_POP_FLAT_TOP_GLOW_ENABLED] = enabled }
+        }
+    }
+
     fun setEnableEdgePopInLandscape(enabled: Boolean) {
         if (_settings.value.enableEdgePopInLandscape == enabled) return
         _settings.value = _settings.value.copy(enableEdgePopInLandscape = enabled)
@@ -617,15 +688,6 @@ class SettingsRepository private constructor(context: Context) {
         _settings.value = _settings.value.copy(showSystemPanelWhenHudOff = enabled)
         scope.launch {
             appContext.nudgeDataStore.edit { it[Keys.SHOW_SYSTEM_PANEL_WHEN_HUD_OFF] = enabled }
-        }
-    }
-
-    fun setVolumeStep(step: Int) {
-        val clamped = NudgeSettings.clampVolumeStep(step)
-        if (_settings.value.volumeStep == clamped) return
-        _settings.value = _settings.value.copy(volumeStep = clamped)
-        scope.launch {
-            appContext.nudgeDataStore.edit { it[Keys.VOLUME_STEP] = clamped }
         }
     }
 
@@ -945,16 +1007,55 @@ class SettingsRepository private constructor(context: Context) {
     }
 
     fun setCustomButton(keyCode: Int, scanCode: Int, label: String) {
+        val src = TriggerSource.ACCESSIBILITY.name
         _settings.value = _settings.value.copy(
+            customButtonSource = src,
             customButtonKeyCode = keyCode,
             customButtonScanCode = scanCode,
-            customButtonLabel = label
+            customButtonLabel = label,
+            customButtonDeviceName = ""
         )
         scope.launch {
             appContext.nudgeDataStore.edit { prefs ->
+                prefs[Keys.CUSTOM_BUTTON_SOURCE] = src
                 prefs[Keys.CUSTOM_BUTTON_KEY_CODE] = keyCode
                 prefs[Keys.CUSTOM_BUTTON_SCAN_CODE] = scanCode
                 prefs[Keys.CUSTOM_BUTTON_LABEL] = label
+                prefs[Keys.CUSTOM_BUTTON_DEVICE_NAME] = ""
+            }
+        }
+    }
+
+    fun setCustomHardwareButton(trigger: HardwareKeyTrigger) {
+        val src = trigger.source.name
+        val keyCode = trigger.androidKeyCode ?: 0
+        val scanCode = trigger.scanCode ?: 0
+        val label = trigger.linuxKeyName ?: ""
+        val devName = trigger.deviceName ?: ""
+        _settings.value = _settings.value.copy(
+            customButtonSource = src,
+            customButtonKeyCode = keyCode,
+            customButtonScanCode = scanCode,
+            customButtonLabel = label,
+            customButtonDeviceName = devName
+        )
+        scope.launch {
+            appContext.nudgeDataStore.edit { prefs ->
+                prefs[Keys.CUSTOM_BUTTON_SOURCE] = src
+                prefs[Keys.CUSTOM_BUTTON_KEY_CODE] = keyCode
+                prefs[Keys.CUSTOM_BUTTON_SCAN_CODE] = scanCode
+                prefs[Keys.CUSTOM_BUTTON_LABEL] = label
+                prefs[Keys.CUSTOM_BUTTON_DEVICE_NAME] = devName
+            }
+        }
+    }
+
+    fun setEnableShizukuPowerHoldFallback(enabled: Boolean) {
+        if (_settings.value.enableShizukuPowerHoldFallback == enabled) return
+        _settings.value = _settings.value.copy(enableShizukuPowerHoldFallback = enabled)
+        scope.launch {
+            appContext.nudgeDataStore.edit { prefs ->
+                prefs[Keys.ENABLE_SHIZUKU_POWER_HOLD_FALLBACK] = enabled
             }
         }
     }
@@ -1282,6 +1383,14 @@ class SettingsRepository private constructor(context: Context) {
         }
     }
 
+    fun setSoundIconModeSwitchHapticsEnabled(enabled: Boolean) {
+        if (_settings.value.soundIconModeSwitchHapticsEnabled == enabled) return
+        _settings.value = _settings.value.copy(soundIconModeSwitchHapticsEnabled = enabled)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.SOUND_ICON_MODE_SWITCH_HAPTICS_ENABLED] = enabled }
+        }
+    }
+
     fun setDndPanelHapticsEnabled(enabled: Boolean) {
         if (_settings.value.dndPanelHapticsEnabled == enabled) return
         _settings.value = _settings.value.copy(dndPanelHapticsEnabled = enabled)
@@ -1295,6 +1404,14 @@ class SettingsRepository private constructor(context: Context) {
         _settings.value = _settings.value.copy(actionsPanelHapticsEnabled = enabled)
         scope.launch {
             appContext.nudgeDataStore.edit { it[Keys.ACTIONS_PANEL_HAPTICS_ENABLED] = enabled }
+        }
+    }
+
+    fun setNudgeHapticsEnabled(enabled: Boolean) {
+        if (_settings.value.nudgeHapticsEnabled == enabled) return
+        _settings.value = _settings.value.copy(nudgeHapticsEnabled = enabled)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.NUDGE_HAPTICS_ENABLED] = enabled }
         }
     }
 
@@ -1589,6 +1706,183 @@ class SettingsRepository private constructor(context: Context) {
     }
 
     fun setIsMasterHapticsEnabled(enabled: Boolean) = setHapticsEnabled(enabled)
+
+    fun setVolumeSliderPillTransparency(transparency: Int) {
+        val clamped = transparency.coerceIn(0, 100)
+        if (_settings.value.volumeSliderPillTransparency == clamped) return
+        _settings.value = _settings.value.copy(volumeSliderPillTransparency = clamped)
+        requestLivePreview(PreviewTarget.HUD)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.VOLUME_SLIDER_PILL_TRANSPARENCY] = clamped }
+        }
+    }
+
+    fun setVolumeSliderBlur(blur: Float) {
+        val clamped = blur.coerceIn(0f, 1f)
+        if (_settings.value.volumeSliderBlur == clamped) return
+        _settings.value = _settings.value.copy(volumeSliderBlur = clamped)
+        requestLivePreview(PreviewTarget.HUD)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.VOLUME_SLIDER_BLUR] = clamped }
+        }
+    }
+
+    fun setVolumeSliderPillBlurDp(blurDp: Float) {
+        val clamped = blurDp.coerceIn(0f, 30f)
+        if (_settings.value.volumeSliderPillBlurDp == clamped) return
+        _settings.value = _settings.value.copy(volumeSliderPillBlurDp = clamped)
+        requestLivePreview(PreviewTarget.HUD)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.VOLUME_SLIDER_PILL_BLUR_DP] = clamped }
+        }
+    }
+
+    fun setUseShizukuForDnd(enabled: Boolean) {
+        if (_settings.value.useShizukuForDnd == enabled) return
+        _settings.value = _settings.value.copy(useShizukuForDnd = enabled)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.USE_SHIZUKU_FOR_DND] = enabled }
+        }
+    }
+
+    fun setEnablePersistentNudges(enabled: Boolean) {
+        if (_settings.value.enablePersistentNudges == enabled) return
+        _settings.value = _settings.value.copy(enablePersistentNudges = enabled)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.ENABLE_PERSISTENT_NUDGES] = enabled }
+        }
+    }
+
+    fun setPersistentNudges(nudges: List<PersistentNudge>) {
+        val limited = nudges.take(10)
+        _settings.value = _settings.value.copy(persistentNudges = limited)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.PERSISTENT_NUDGES_JSON] = serializePersistentNudges(limited) }
+        }
+    }
+
+    fun addPersistentNudge(nudge: PersistentNudge) {
+        val current = _settings.value.persistentNudges
+        if (current.size >= 10) return
+        val updated = current + nudge
+        setPersistentNudges(updated)
+    }
+
+    fun updatePersistentNudge(nudge: PersistentNudge) {
+        val current = _settings.value.persistentNudges
+        val updated = current.map { if (it.id == nudge.id) nudge else it }
+        setPersistentNudges(updated)
+    }
+
+    fun deletePersistentNudge(id: String) {
+        val current = _settings.value.persistentNudges
+        val updated = current.filterNot { it.id == id }
+        setPersistentNudges(updated)
+    }
+
+    fun setNudgeWidthDp(width: Float) {
+        val clamped = width.coerceIn(4f, 30f)
+        if (_settings.value.nudgeWidthDp == clamped) return
+        _settings.value = _settings.value.copy(nudgeWidthDp = clamped)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.NUDGE_WIDTH_DP] = clamped }
+        }
+    }
+
+    fun setNudgeHeightDp(height: Float) {
+        val clamped = height.coerceIn(40f, 140f)
+        if (_settings.value.nudgeHeightDp == clamped) return
+        _settings.value = _settings.value.copy(nudgeHeightDp = clamped)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.NUDGE_HEIGHT_DP] = clamped }
+        }
+    }
+
+    fun setNudgeGlowEnabled(enabled: Boolean) {
+        if (_settings.value.nudgeGlowEnabled == enabled) return
+        _settings.value = _settings.value.copy(nudgeGlowEnabled = enabled)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.NUDGE_GLOW_ENABLED] = enabled }
+        }
+    }
+
+    fun setNudgeMenuWidthDp(width: Float) {
+        val clamped = width.coerceIn(20f, 100f)
+        if (_settings.value.nudgeMenuWidthDp == clamped) return
+        _settings.value = _settings.value.copy(nudgeMenuWidthDp = clamped)
+        requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 1500L)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.NUDGE_MENU_WIDTH_DP] = clamped }
+        }
+    }
+
+    fun setNudgeMenuHeightDp(height: Float) {
+        val clamped = height.coerceIn(180f, 600f)
+        if (_settings.value.nudgeMenuHeightDp == clamped) return
+        _settings.value = _settings.value.copy(nudgeMenuHeightDp = clamped)
+        requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 1500L)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.NUDGE_MENU_HEIGHT_DP] = clamped }
+        }
+    }
+
+    fun setNudgeMenuXFraction(x: Float) {
+        val clamped = x.coerceIn(0f, 0.5f)
+        if (_settings.value.nudgeMenuXFraction == clamped) return
+        _settings.value = _settings.value.copy(nudgeMenuXFraction = clamped)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.NUDGE_MENU_X_FRACTION] = clamped }
+        }
+    }
+
+    fun setNudgeMenuYFraction(y: Float) {
+        val clamped = y.coerceIn(0.1f, 0.9f)
+        if (_settings.value.nudgeMenuYFraction == clamped) return
+        _settings.value = _settings.value.copy(nudgeMenuYFraction = clamped)
+        requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 1500L)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.NUDGE_MENU_Y_FRACTION] = clamped }
+        }
+    }
+
+    fun setNudgeMenuEdge(edge: ScreenEdge) {
+        if (_settings.value.nudgeMenuEdge == edge) return
+        _settings.value = _settings.value.copy(nudgeMenuEdge = edge)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.NUDGE_MENU_EDGE] = edge.name }
+        }
+    }
+
+    fun setEnableThinVolumeHud(enabled: Boolean) {
+        if (_settings.value.enableThinVolumeHud == enabled) return
+        _settings.value = _settings.value.copy(enableThinVolumeHud = enabled)
+        requestLivePreview(PreviewTarget.HUD)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.ENABLE_THIN_VOLUME_HUD] = enabled }
+        }
+    }
+
+    fun setNudgeMenuApps(apps: List<NudgeMenuApp>) {
+        val limited = apps.take(20)
+        if (_settings.value.nudgeMenuApps == limited) return
+        _settings.value = _settings.value.copy(nudgeMenuApps = limited)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.NUDGE_MENU_APPS_JSON] = serializeNudgeMenuApps(limited) }
+        }
+    }
+
+    fun addNudgeMenuApp(app: NudgeMenuApp) {
+        val current = _settings.value.nudgeMenuApps
+        if (current.any { it.packageName == app.packageName }) return
+        val updated = current + app
+        setNudgeMenuApps(updated)
+    }
+
+    fun removeNudgeMenuApp(packageName: String) {
+        val current = _settings.value.nudgeMenuApps
+        val updated = current.filterNot { it.packageName == packageName }
+        setNudgeMenuApps(updated)
+    }
 
     companion object {
         @Volatile

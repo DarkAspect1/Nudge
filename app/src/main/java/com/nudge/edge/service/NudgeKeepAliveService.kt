@@ -27,21 +27,21 @@ import kotlinx.coroutines.launch
 class NudgeKeepAliveService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var cloakingJob: Job? = null
     private var keepAliveJob: Job? = null
+    private var cloakingPollJob: Job? = null
+    @Volatile private var isCloakingActive = false
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                if (_isCurrentlyCloaked.value) {
-                    restoreFromCloak()
-                }
+                restoreFromCloak()
             }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         ShizukuManager.init(this)
         createNotificationChannel()
 
@@ -71,8 +71,56 @@ class NudgeKeepAliveService : Service() {
         val repo = SettingsRepository.getInstance(applicationContext)
         serviceScope.launch {
             repo.settings.collectLatest { settings ->
-                if (!settings.isHideAccessibilityEnabled && _isCurrentlyCloaked.value) {
+                if (settings.cloakedPackages.isEmpty() && (_isCurrentlyCloaked.value || isCloakingActive)) {
                     restoreFromCloak()
+                }
+            }
+        }
+    }
+
+    fun cloakAccessibility() {
+        if (isCloakingActive) return
+        isCloakingActive = true
+        _isCurrentlyCloaked.value = true
+
+        NudgeAccessibilityService.instance?.dismissAllOverlaysForCloakedApp()
+
+        if (ShizukuManager.hasShizukuPermission()) {
+            ShizukuManager.disableAccessibility(applicationContext)
+        }
+
+        startCloakPolling()
+    }
+
+    fun restoreFromCloak() {
+        if (!isCloakingActive && !_isCurrentlyCloaked.value) return
+        isCloakingActive = false
+        _isCurrentlyCloaked.value = false
+        cloakingPollJob?.cancel()
+        cloakingPollJob = null
+
+        val settings = SettingsRepository.getInstance(applicationContext).settings.value
+        if (settings.isAutoKeepAliveViaShizuku || ShizukuManager.hasShizukuPermission()) {
+            ShizukuManager.enableAccessibility(applicationContext)
+        }
+    }
+
+    private fun startCloakPolling() {
+        cloakingPollJob?.cancel()
+        cloakingPollJob = serviceScope.launch {
+            val repo = SettingsRepository.getInstance(applicationContext)
+            while (isCloakingActive && isActive) {
+                delay(700L)
+                val settings = repo.settings.value
+                val cloakedSet = settings.cloakedPackages
+                if (cloakedSet.isEmpty()) {
+                    restoreFromCloak()
+                    break
+                }
+                val fgPkg = ShizukuManager.getForegroundPackageViaShizuku()
+                if (fgPkg != null && !cloakedSet.contains(fgPkg)) {
+                    restoreFromCloak()
+                    break
                 }
             }
         }
@@ -86,9 +134,26 @@ class NudgeKeepAliveService : Service() {
                 delay(4000L)
                 val settings = repo.settings.value
 
-                if (settings.isAutoKeepAliveViaShizuku && !_isCurrentlyCloaked.value) {
-                    if (NudgeAccessibilityService.instance == null) {
-                        ShizukuManager.enableAccessibility(applicationContext)
+                if (settings.isAutoKeepAliveViaShizuku) {
+                    val accService = NudgeAccessibilityService.instance
+                    val isServiceCloaked = accService?.isCurrentAppExcludedFast == true
+                    val currentPkg = ShizukuManager.getForegroundPackageViaShizuku()
+                    val isPkgCloaked = currentPkg != null && settings.cloakedPackages.contains(currentPkg)
+                    val isCloaked = if (currentPkg != null) {
+                        isPkgCloaked
+                    } else {
+                        isServiceCloaked
+                    }
+                    if (isCloaked) {
+                        if (!isCloakingActive) {
+                            cloakAccessibility()
+                        }
+                    } else {
+                        if (isCloakingActive) {
+                            restoreFromCloak()
+                        } else if (accService == null) {
+                            ShizukuManager.enableAccessibility(applicationContext)
+                        }
                     }
                 }
             }
@@ -99,47 +164,30 @@ class NudgeKeepAliveService : Service() {
         val repo = SettingsRepository.getInstance(applicationContext)
         val settings = repo.settings.value
 
-        if (!settings.isHideAccessibilityEnabled) return
         val cloakedSet = settings.cloakedPackages
-        if (cloakedSet.isEmpty()) return
-
-        if (cloakedSet.contains(packageName)) {
-            if (!_isCurrentlyCloaked.value) {
-                cloakAccessibility()
-            }
-        } else {
-            if (_isCurrentlyCloaked.value) {
+        if (cloakedSet.isEmpty()) {
+            if (_isCurrentlyCloaked.value || isCloakingActive) {
                 restoreFromCloak()
             }
+            return
         }
-    }
 
-    private fun cloakAccessibility() {
-        _isCurrentlyCloaked.value = true
-        ShizukuManager.disableAccessibility(applicationContext)
+        val isSystemChrome = packageName == "com.android.systemui" ||
+            packageName == "android" ||
+            packageName.contains("systemui") ||
+            packageName.contains("inputmethod") ||
+            packageName.contains("honeyboard")
 
-        cloakingJob?.cancel()
-        cloakingJob = serviceScope.launch {
-            val repo = SettingsRepository.getInstance(applicationContext)
-            while (isActive && _isCurrentlyCloaked.value) {
-                delay(800L)
-                val currentPkg = ShizukuManager.getForegroundPackageViaShizuku()
-                if (currentPkg != null) {
-                    val cloakedSet = repo.settings.value.cloakedPackages
-                    if (!cloakedSet.contains(currentPkg)) {
-                        restoreFromCloak()
-                        break
-                    }
-                }
-            }
+        if (isSystemChrome) {
+            return
         }
-    }
 
-    private fun restoreFromCloak() {
-        _isCurrentlyCloaked.value = false
-        cloakingJob?.cancel()
-        cloakingJob = null
-        ShizukuManager.enableAccessibility(applicationContext)
+        val shouldCloak = cloakedSet.contains(packageName)
+        if (shouldCloak) {
+            cloakAccessibility()
+        } else {
+            restoreFromCloak()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -155,7 +203,6 @@ class NudgeKeepAliveService : Service() {
 
     override fun onDestroy() {
         instance = null
-        cloakingJob?.cancel()
         keepAliveJob?.cancel()
         runCatching { unregisterReceiver(screenReceiver) }
         super.onDestroy()

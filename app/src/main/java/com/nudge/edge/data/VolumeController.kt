@@ -319,20 +319,48 @@ class VolumeController(context: Context) {
         return 100
     }
 
-    fun isCallActive(): Boolean {
+    fun isCallActive(context: Context? = null): Boolean {
         val mode = audioManager.mode
-        return mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION
+        if (mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION) {
+            return true
+        }
+        val ctx = context ?: appContext
+        val telecom = ctx.getSystemService(Context.TELECOM_SERVICE) as? android.telecom.TelecomManager
+        if (telecom != null) {
+            if (runCatching { telecom.isInCall }.getOrDefault(false) ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && runCatching { telecom.isInManagedCall }.getOrDefault(false))) {
+                return true
+            }
+        }
+        val telephony = ctx.getSystemService(Context.TELEPHONY_SERVICE) as? android.telephony.TelephonyManager
+        if (telephony != null) {
+            if (runCatching { telephony.callState != android.telephony.TelephonyManager.CALL_STATE_IDLE }.getOrDefault(false)) {
+                return true
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val activePlaybacks = runCatching { audioManager.activePlaybackConfigurations }.getOrDefault(emptyList())
+            val hasVoicePlayback = activePlaybacks.any { config ->
+                val usage = config.audioAttributes.usage
+                usage == AudioAttributes.USAGE_VOICE_COMMUNICATION ||
+                usage == AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING
+            }
+            if (hasVoicePlayback) return true
+
+            val activeRecordings = runCatching { audioManager.activeRecordingConfigurations }.getOrDefault(emptyList())
+            val hasVoiceRecording = activeRecordings.any { config ->
+                val source = config.audioSource
+                source == android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            }
+            if (hasVoiceRecording) return true
+        }
+        return false
     }
 
     fun getStreamMin(streamType: Int): Int {
         val safeStream = if (streamType == STREAM_BLUETOOTH_SCO) AudioManager.STREAM_VOICE_CALL else streamType
         if (safeStream == AudioManager.STREAM_VOICE_CALL) {
-            val min = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                runCatching { audioManager.getStreamMinVolume(AudioManager.STREAM_VOICE_CALL) }.getOrDefault(1)
-            } else {
-                1
-            }
-            return min.coerceAtLeast(1)
+            return 1
         }
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             runCatching { audioManager.getStreamMinVolume(safeStream) }.getOrDefault(0)
@@ -410,6 +438,23 @@ class VolumeController(context: Context) {
         val min = getStreamMin(streamType)
         val max = getStreamMax(streamType)
         return (min + (max - min) * clamped).roundToInt().coerceIn(min, max)
+    }
+
+    fun ensureRingerAudible(streamType: Int) {
+        if (streamType != AudioManager.STREAM_RING &&
+            streamType != AudioManager.STREAM_NOTIFICATION
+        ) return
+        if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL) {
+            runCatching { audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL }
+        }
+        val notifManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        if (notifManager != null && notifManager.isNotificationPolicyAccessGranted) {
+            if (notifManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL) {
+                runCatching {
+                    notifManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+                }
+            }
+        }
     }
 
     fun setStreamIndex(

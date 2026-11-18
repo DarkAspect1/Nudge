@@ -2,15 +2,22 @@ package com.nudge.edge.data
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.os.Build
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.lsposed.hiddenapibypass.HiddenApiBypass
+import rikka.shizuku.Shizuku
+import rikka.shizuku.ShizukuBinderWrapper
+import java.lang.reflect.Field
+import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 
@@ -19,19 +26,19 @@ data class ActiveMediaApp(
     val packageName: String,
     val appLabel: String,
     val appIcon: Drawable,
-    val currentSteps: Int,
-    val maxVolumeLimit: Int
+    val volumeFraction: Float,
+    val maxVolumeLimit: Int = 100
 ) {
     val fillFraction: Float
-        get() = (currentSteps.toFloat() / maxVolumeLimit.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
-    val volumeFraction: Float
-        get() = fillFraction
+        get() = volumeFraction.coerceIn(0f, 1f)
+    val currentSteps: Int
+        get() = (fillFraction * maxVolumeLimit.coerceAtLeast(1).toFloat()).roundToInt()
+            .coerceIn(0, maxVolumeLimit.coerceAtLeast(1))
 }
 
 class AppVolumeController(
     private val context: Context,
-    private val audioManager: AudioManager,
-    private val fineVolumeController: FineVolumeController
+    private val audioManager: AudioManager
 ) {
     private val packageManager = context.packageManager
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -43,21 +50,37 @@ class AppVolumeController(
     private val _activeMediaApps = MutableStateFlow<List<ActiveMediaApp>>(emptyList())
     val activeMediaApps: StateFlow<List<ActiveMediaApp>> = _activeMediaApps.asStateFlow()
 
-    var currentGlobalSubStepGain: Float = 1.0f
-
     @Volatile
     var currentForegroundPackage: String = ""
+
+    @Volatile
+    var isPerAppVolumeEnabled: Boolean = false
+
+    private var iAudioService: Any? = null
+    private var getActiveConfigsMethod: Method? = null
+    private var getClientUidMethod: Method? = null
+    private var getPlayerStateMethod: Method? = null
+    private var getPlayerProxyMethod: Method? = null
+    private var playerSetVolumeMethod: Method? = null
+    private var iPlayerSetVolumeMethod: Method? = null
+    private var clientUidField: Field? = null
+    private var playerStateField: Field? = null
+    private var iPlayerField: Field? = null
 
     private val playbackCallback = object : AudioManager.AudioPlaybackCallback() {
         override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) {
             super.onPlaybackConfigChanged(configs)
-            refreshAndEnforceActiveApps(currentGlobalSubStepGain)
+            refreshActiveApps()
         }
     }
 
     init {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching { HiddenApiBypass.addHiddenApiExemptions("L") }
+        }
+        bindShizukuAudioService()
         audioManager.registerAudioPlaybackCallback(playbackCallback, mainHandler)
-        refreshAndEnforceActiveApps()
+        refreshActiveApps()
     }
 
     fun release() {
@@ -70,6 +93,141 @@ class AppVolumeController(
         usageByUid.clear()
         activeProxiesCache.clear()
         _activeMediaApps.value = emptyList()
+    }
+
+    fun bindShizukuAudioService(): Boolean {
+        return runCatching {
+            if (!Shizuku.pingBinder() || Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                return false
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                runCatching { HiddenApiBypass.addHiddenApiExemptions("L") }
+            }
+
+            val serviceManagerClass = Class.forName("android.os.ServiceManager")
+            val getServiceMethod = serviceManagerClass.getDeclaredMethod("getService", String::class.java).apply {
+                isAccessible = true
+            }
+            val rawBinder = getServiceMethod.invoke(null, Context.AUDIO_SERVICE) as? IBinder ?: return false
+            val wrappedBinder = ShizukuBinderWrapper(rawBinder)
+
+            val stubClass = Class.forName("android.media.IAudioService\$Stub")
+            val asInterfaceMethod = stubClass.getDeclaredMethod("asInterface", IBinder::class.java).apply {
+                isAccessible = true
+            }
+            val serviceInstance = asInterfaceMethod.invoke(null, wrappedBinder) ?: return false
+
+            val activeConfigsMethod = serviceInstance.javaClass.getDeclaredMethod("getActivePlaybackConfigurations").apply {
+                isAccessible = true
+            }
+            activeConfigsMethod.invoke(serviceInstance) as? List<*> ?: return false
+
+            val apcClass = AudioPlaybackConfiguration::class.java
+            getClientUidMethod = runCatching {
+                apcClass.getDeclaredMethod("getClientUid").apply { isAccessible = true }
+            }.getOrNull()
+            getPlayerStateMethod = runCatching {
+                apcClass.getDeclaredMethod("getPlayerState").apply { isAccessible = true }
+            }.getOrNull()
+            getPlayerProxyMethod = runCatching {
+                apcClass.getDeclaredMethod("getPlayerProxy").apply { isAccessible = true }
+            }.getOrNull()
+
+            clientUidField = runCatching {
+                apcClass.getDeclaredField("mClientUid").apply { isAccessible = true }
+            }.getOrNull()
+            playerStateField = runCatching {
+                apcClass.getDeclaredField("mPlayerState").apply { isAccessible = true }
+            }.getOrNull()
+            iPlayerField = runCatching {
+                apcClass.getDeclaredField("mIPlayer").apply { isAccessible = true }
+            }.getOrNull()
+
+            val playerProxyClass = Class.forName("android.media.PlayerProxy")
+            playerSetVolumeMethod = runCatching {
+                playerProxyClass.getDeclaredMethod("setVolume", Float::class.javaPrimitiveType).apply {
+                    isAccessible = true
+                }
+            }.getOrNull()
+
+            val iPlayerClass = Class.forName("android.media.IPlayer")
+            iPlayerSetVolumeMethod = runCatching {
+                iPlayerClass.getDeclaredMethod("setVolume", Float::class.javaPrimitiveType).apply {
+                    isAccessible = true
+                }
+            }.getOrNull()
+
+            iAudioService = serviceInstance
+            getActiveConfigsMethod = activeConfigsMethod
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun getRawActivePlaybackConfigurations(): List<Any>? {
+        if (iAudioService == null || getActiveConfigsMethod == null) {
+            if (!bindShizukuAudioService()) return null
+        }
+        return runCatching {
+            @Suppress("UNCHECKED_CAST")
+            getActiveConfigsMethod?.invoke(iAudioService) as? List<Any>
+        }.getOrNull()
+    }
+
+    private fun getClientUid(config: Any): Int {
+        return runCatching {
+            (getClientUidMethod?.invoke(config) as? Int)
+                ?: (clientUidField?.getInt(config))
+                ?: -1
+        }.getOrDefault(-1)
+    }
+
+    private fun getPlayerState(config: Any): Int {
+        return runCatching {
+            (getPlayerStateMethod?.invoke(config) as? Int)
+                ?: (playerStateField?.getInt(config))
+                ?: -1
+        }.getOrDefault(-1)
+    }
+
+    private fun getPlayerProxy(config: Any): Any? {
+        return runCatching {
+            getPlayerProxyMethod?.invoke(config) ?: iPlayerField?.get(config)
+        }.getOrNull()
+    }
+
+    private fun getAudioUsage(config: Any): Int {
+        return runCatching {
+            if (config is AudioPlaybackConfiguration) {
+                config.audioAttributes?.usage ?: 0
+            } else {
+                val method = config.javaClass.getMethod("getAudioAttributes")
+                val attrs = method.invoke(config)
+                val usageMethod = attrs?.javaClass?.getMethod("getUsage")
+                usageMethod?.invoke(attrs) as? Int ?: 0
+            }
+        }.getOrDefault(0)
+    }
+
+    private fun setPlayerProxyVolume(proxyOrIPlayer: Any, volume: Float): Boolean {
+        val clamped = volume.coerceIn(0f, 1f)
+        return runCatching {
+            when {
+                playerSetVolumeMethod != null && proxyOrIPlayer.javaClass.name == "android.media.PlayerProxy" -> {
+                    playerSetVolumeMethod?.invoke(proxyOrIPlayer, clamped)
+                    true
+                }
+                iPlayerSetVolumeMethod != null -> {
+                    iPlayerSetVolumeMethod?.invoke(proxyOrIPlayer, clamped)
+                    true
+                }
+                else -> {
+                    val m = proxyOrIPlayer.javaClass.getDeclaredMethod("setVolume", Float::class.javaPrimitiveType)
+                    m.isAccessible = true
+                    m.invoke(proxyOrIPlayer, clamped)
+                    true
+                }
+            }
+        }.getOrDefault(false)
     }
 
     private fun isSystemApp(packageName: String): Boolean {
@@ -99,29 +257,28 @@ class AppVolumeController(
         }.getOrDefault(false)
     }
 
-    fun refreshAndEnforceActiveApps(globalSubStepGain: Float = currentGlobalSubStepGain) {
-        currentGlobalSubStepGain = globalSubStepGain
-        val rawConfigs = fineVolumeController.getRawActivePlaybackConfigurations()
+    fun refreshActiveApps() {
+        val rawConfigs = getRawActivePlaybackConfigurations()
         if (rawConfigs.isNullOrEmpty()) {
+            activeProxiesCache.clear()
             _activeMediaApps.value = emptyList()
             return
         }
 
-        val currentLimit = fineVolumeController.dynamicMaxLimit.value.coerceAtLeast(1)
         val activeProxiesByUid = linkedMapOf<Int, MutableList<Any>>()
-        this.usageByUid.clear()
+        usageByUid.clear()
 
         for (config in rawConfigs) {
-            val state = fineVolumeController.getPlayerState(config)
-            val uid = fineVolumeController.getClientUid(config)
-            val usage = fineVolumeController.getAudioUsage(config)
+            val state = getPlayerState(config)
+            val uid = getClientUid(config)
+            val usage = getAudioUsage(config)
 
             if (state == 2 && uid >= 10000) {
-                val proxy = fineVolumeController.getPlayerProxy(config)
+                val proxy = getPlayerProxy(config)
                 if (proxy != null) {
                     activeProxiesByUid.getOrPut(uid) { mutableListOf() }.add(proxy)
-                    if (!this.usageByUid.containsKey(uid) || usage == 1 || usage == 14) {
-                        this.usageByUid[uid] = usage
+                    if (!usageByUid.containsKey(uid) || usage == 1 || usage == 14) {
+                        usageByUid[uid] = usage
                     }
                 }
             }
@@ -130,11 +287,13 @@ class AppVolumeController(
         activeProxiesCache.clear()
         for ((uid, proxies) in activeProxiesByUid) {
             activeProxiesCache[uid] = proxies.toList()
-            val savedFraction = perAppFractionMap.getOrPut(uid) { 1.0f }
-            val effectiveGain = (savedFraction * globalSubStepGain).coerceIn(0f, 1f)
+            val directGain = if (isPerAppVolumeEnabled) {
+                (perAppFractionMap.getOrPut(uid) { 1.0f }).coerceIn(0f, 1f)
+            } else {
+                1.0f
+            }
             proxies.forEach { proxy ->
-                fineVolumeController.setPlayerProxyVolume(proxy, effectiveGain)
-                fineVolumeController.setPlayerProxyVolume(proxy, effectiveGain)
+                setPlayerProxyVolume(proxy, directGain)
             }
         }
 
@@ -174,7 +333,7 @@ class AppVolumeController(
 
         val appsList = mutableListOf<ActiveMediaApp>()
         for ((uid, pkgName) in candidatePackagesByUid) {
-            val savedFraction = perAppFractionMap.getOrPut(uid) { 1.0f }
+            val savedFraction = perAppFractionMap.getOrPut(uid) { 1.0f }.coerceIn(0f, 1f)
             val icon = iconCache.getOrPut(pkgName) {
                 runCatching { packageManager.getApplicationIcon(pkgName) }.getOrNull()
                     ?: packageManager.getLaunchIntentForPackage(pkgName)?.resolveActivityInfo(packageManager, 0)?.loadIcon(packageManager)
@@ -195,15 +354,13 @@ class AppVolumeController(
                 rawLabel
             }
 
-            val appSteps = (savedFraction * currentLimit.toFloat()).roundToInt().coerceIn(0, currentLimit)
             appsList.add(
                 ActiveMediaApp(
                     uid = uid,
                     packageName = pkgName,
                     appLabel = label,
                     appIcon = icon,
-                    currentSteps = appSteps,
-                    maxVolumeLimit = currentLimit
+                    volumeFraction = savedFraction
                 )
             )
         }
@@ -222,52 +379,24 @@ class AppVolumeController(
         return apps.firstOrNull { usageByUid[it.uid] != 14 } ?: apps.firstOrNull()
     }
 
-    fun setAppVolumeSteps(uid: Int, targetSteps: Int) {
-        val currentLimit = fineVolumeController.dynamicMaxLimit.value.coerceAtLeast(1)
-        val fraction = (targetSteps.coerceIn(0, currentLimit).toFloat() / currentLimit.toFloat()).coerceIn(0f, 1f)
-        perAppFractionMap[uid] = fraction
+    fun setAppVolume(uid: Int, newFraction: Float) {
+        val clamped = newFraction.coerceIn(0f, 1f)
+        perAppFractionMap[uid] = clamped
         val proxies = activeProxiesCache[uid]
         if (!proxies.isNullOrEmpty()) {
-            val effectiveGain = (fraction * currentGlobalSubStepGain).coerceIn(0f, 1f)
             proxies.forEach { proxy ->
-                fineVolumeController.setPlayerProxyVolume(proxy, effectiveGain)
+                setPlayerProxyVolume(proxy, clamped)
             }
         }
         val currentList = _activeMediaApps.value
         if (currentList.isNotEmpty()) {
             _activeMediaApps.value = currentList.map { app ->
                 if (app.uid == uid) {
-                    app.copy(currentSteps = targetSteps.coerceIn(0, currentLimit))
-                } else app
+                    app.copy(volumeFraction = clamped)
+                } else {
+                    app
+                }
             }
         }
-        refreshAndEnforceActiveApps(currentGlobalSubStepGain)
-    }
-
-    fun setAppVolumeSteps(
-        uid: Int,
-        targetSteps: Int,
-        maxLimitOverride: Int? = null,
-        globalSubStepGain: Float = currentGlobalSubStepGain
-    ) {
-        val currentLimit = maxLimitOverride ?: fineVolumeController.dynamicMaxLimit.value.coerceAtLeast(1)
-        val fraction = (targetSteps.coerceIn(0, currentLimit).toFloat() / currentLimit.toFloat()).coerceIn(0f, 1f)
-        perAppFractionMap[uid] = fraction
-        val proxies = activeProxiesCache[uid]
-        if (!proxies.isNullOrEmpty()) {
-            val effectiveGain = (fraction * globalSubStepGain).coerceIn(0f, 1f)
-            proxies.forEach { proxy ->
-                fineVolumeController.setPlayerProxyVolume(proxy, effectiveGain)
-            }
-        }
-        val currentList = _activeMediaApps.value
-        if (currentList.isNotEmpty()) {
-            _activeMediaApps.value = currentList.map { app ->
-                if (app.uid == uid) {
-                    app.copy(currentSteps = targetSteps.coerceIn(0, currentLimit))
-                } else app
-            }
-        }
-        refreshAndEnforceActiveApps(globalSubStepGain)
     }
 }

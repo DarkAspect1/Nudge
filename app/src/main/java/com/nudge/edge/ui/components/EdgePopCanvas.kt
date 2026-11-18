@@ -12,11 +12,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.nudge.edge.model.EdgeOrientationMapper
+import com.nudge.edge.model.EdgePopStyle
 import com.nudge.edge.model.NudgeSettings
 import com.nudge.edge.model.ScreenEdge
 import kotlinx.coroutines.launch
@@ -220,6 +224,125 @@ fun buildMergedEdgePopPath(
     }
 }
 
+fun buildFlatTopEdgePopPath(
+    path: Path,
+    canvasWidth: Float,
+    canvasHeight: Float,
+    startPosPx: Float,
+    endPosPx: Float,
+    protrusionPx: Float,
+    screenEdge: ScreenEdge
+) {
+    path.reset()
+    if (protrusionPx <= 0.25f || startPosPx >= endPosPx) return
+    val totalSpanPx = endPosPx - startPosPx
+    val shoulderLen = (totalSpanPx * 0.22f).coerceIn(4f, (totalSpanPx * 0.38f).coerceAtLeast(4f))
+    val c1 = 0.50f
+
+    when (screenEdge) {
+        ScreenEdge.RIGHT,
+        ScreenEdge.LEFT -> {
+            val isRight = screenEdge == ScreenEdge.RIGHT
+            val edgeX = if (isRight) canvasWidth else 0f
+            val dir = if (isRight) -1f else 1f
+            val apexX = edgeX + dir * protrusionPx
+
+            val topShoulderEnd = startPosPx + shoulderLen
+            val bottomShoulderStart = endPosPx - shoulderLen
+
+            path.moveTo(edgeX, startPosPx)
+            path.cubicTo(
+                edgeX,
+                startPosPx + shoulderLen * c1,
+                apexX,
+                topShoulderEnd - shoulderLen * c1,
+                apexX,
+                topShoulderEnd
+            )
+            path.lineTo(apexX, bottomShoulderStart)
+            path.cubicTo(
+                apexX,
+                bottomShoulderStart + shoulderLen * c1,
+                edgeX,
+                endPosPx - shoulderLen * c1,
+                edgeX,
+                endPosPx
+            )
+            path.close()
+        }
+
+        ScreenEdge.TOP,
+        ScreenEdge.BOTTOM -> {
+            val isTop = screenEdge == ScreenEdge.TOP
+            val edgeY = if (isTop) 0f else canvasHeight
+            val dir = if (isTop) 1f else -1f
+            val apexY = edgeY + dir * protrusionPx
+
+            val leftShoulderEnd = startPosPx + shoulderLen
+            val rightShoulderStart = endPosPx - shoulderLen
+
+            path.moveTo(startPosPx, edgeY)
+            path.cubicTo(
+                startPosPx + shoulderLen * c1,
+                edgeY,
+                leftShoulderEnd - shoulderLen * c1,
+                apexY,
+                leftShoulderEnd,
+                apexY
+            )
+            path.lineTo(rightShoulderStart, apexY)
+            path.cubicTo(
+                rightShoulderStart + shoulderLen * c1,
+                apexY,
+                endPosPx - shoulderLen * c1,
+                edgeY,
+                endPosPx,
+                edgeY
+            )
+            path.close()
+        }
+    }
+}
+
+data class FlatPopItem(
+    val startPx: Float,
+    val endPx: Float,
+    val protrusionPx: Float
+)
+
+fun mergeFlatPopItems(items: List<FlatPopItem>): List<FlatPopItem> {
+    if (items.size <= 1) return items
+    val merged = items.toMutableList()
+    var changed = true
+    while (changed) {
+        changed = false
+        outer@ for (i in 0 until merged.size) {
+            for (j in i + 1 until merged.size) {
+                val a = merged[i]
+                val b = merged[j]
+                val hA = a.endPx - a.startPx
+                val hB = b.endPx - b.startPx
+                val overlap = maxOf(0f, minOf(a.endPx, b.endPx) - maxOf(a.startPx, b.startPx))
+                val minH = minOf(hA, hB)
+                val shouldMerge = (minH > 0f && (overlap / minH) >= 0.40f) ||
+                    (abs(a.startPx - b.startPx) < 1f && abs(a.endPx - b.endPx) < 1f)
+                if (shouldMerge) {
+                    val combined = FlatPopItem(
+                        startPx = minOf(a.startPx, b.startPx),
+                        endPx = maxOf(a.endPx, b.endPx),
+                        protrusionPx = maxOf(a.protrusionPx, b.protrusionPx)
+                    )
+                    merged.removeAt(j)
+                    merged[i] = combined
+                    changed = true
+                    break@outer
+                }
+            }
+        }
+    }
+    return merged
+}
+
 @Composable
 fun EdgePopStripOverlay(
     settings: NudgeSettings,
@@ -338,63 +461,120 @@ fun EdgePopStripOverlay(
 
         val upP = (volProtrusionBasePx * upProgress.value).coerceAtLeast(0f)
         val downP = (volProtrusionBasePx * downProgress.value).coerceAtLeast(0f)
-        val gapPx = abs(upCenterPx - downCenterPx) - volSpreadPx
-        val shouldMergeVolume = upP > 0.25f &&
-            downP > 0.25f &&
-            gapPx <= 28.dp.toPx()
-
-        if (shouldMergeVolume) {
-            buildMergedEdgePopPath(
-                path = scratchPath,
-                canvasWidth = size.width,
-                canvasHeight = size.height,
-                firstCenterPx = upCenterPx,
-                secondCenterPx = downCenterPx,
-                spreadPx = volSpreadPx,
-                firstProtrusionPx = upP,
-                secondProtrusionPx = downP,
-                screenEdge = screenEdge
+        val powerSpreadPx = if (settings.enablePowerButtonPop) settings.powerPopHeightDp.dp.toPx() else 0f
+        val powerProtrusionPx = if (settings.enablePowerButtonPop) {
+            (settings.powerPopWidthDp.dp.toPx() * powerProgress.value).coerceAtLeast(0f)
+        } else 0f
+        val powerCenterPx = if (settings.enablePowerButtonPop && powerProtrusionPx > 0.25f) {
+            clampCenterInsideAxis(
+                rawCenter = EdgeOrientationMapper.computeElementCenterPx(
+                    portraitYFraction = settings.powerButtonYFraction,
+                    rotation = displayRotation,
+                    axisLengthPx = axisLen
+                ),
+                spreadPx = powerSpreadPx,
+                axisLengthPx = axisLen
             )
-            drawPath(path = scratchPath, color = Color.Black)
-        } else {
+        } else 0f
+
+        if (settings.edgePopStyle == EdgePopStyle.FLAT_TOP) {
+            val activeItems = mutableListOf<FlatPopItem>()
             if (upP > 0.25f) {
-                drawSinglePopAtCenter(
-                    path = scratchPath,
-                    canvasWidth = size.width,
-                    canvasHeight = size.height,
-                    centerPx = upCenterPx,
-                    spreadPx = volSpreadPx,
-                    protrusionPx = upP,
-                    screenEdge = screenEdge
+                activeItems.add(
+                    FlatPopItem(
+                        startPx = upCenterPx - volSpreadPx * 0.5f,
+                        endPx = upCenterPx + volSpreadPx * 0.5f,
+                        protrusionPx = upP
+                    )
                 )
             }
             if (downP > 0.25f) {
-                drawSinglePopAtCenter(
+                activeItems.add(
+                    FlatPopItem(
+                        startPx = downCenterPx - volSpreadPx * 0.5f,
+                        endPx = downCenterPx + volSpreadPx * 0.5f,
+                        protrusionPx = downP
+                    )
+                )
+            }
+            if (settings.enablePowerButtonPop && powerProtrusionPx > 0.25f) {
+                activeItems.add(
+                    FlatPopItem(
+                        startPx = powerCenterPx - powerSpreadPx * 0.5f,
+                        endPx = powerCenterPx + powerSpreadPx * 0.5f,
+                        protrusionPx = powerProtrusionPx
+                    )
+                )
+            }
+
+            val mergedItems = mergeFlatPopItems(activeItems)
+            for (item in mergedItems) {
+                buildFlatTopEdgePopPath(
                     path = scratchPath,
                     canvasWidth = size.width,
                     canvasHeight = size.height,
-                    centerPx = downCenterPx,
-                    spreadPx = volSpreadPx,
-                    protrusionPx = downP,
+                    startPosPx = item.startPx,
+                    endPosPx = item.endPx,
+                    protrusionPx = item.protrusionPx,
                     screenEdge = screenEdge
                 )
+                if (settings.edgePopFlatTopGlowEnabled) {
+                    drawFlatTopGlowLine(
+                        canvasWidth = size.width,
+                        canvasHeight = size.height,
+                        startPosPx = item.startPx,
+                        endPosPx = item.endPx,
+                        protrusionPx = item.protrusionPx,
+                        screenEdge = screenEdge
+                    )
+                }
+                drawPath(path = scratchPath, color = Color.Black)
             }
-        }
+        } else {
+            val gapPx = abs(upCenterPx - downCenterPx) - volSpreadPx
+            val shouldMergeVolume = upP > 0.25f &&
+                downP > 0.25f &&
+                gapPx <= 28.dp.toPx()
 
-        if (settings.enablePowerButtonPop) {
-            val powerSpreadPx = settings.powerPopHeightDp.dp.toPx()
-            val powerProtrusionPx = (settings.powerPopWidthDp.dp.toPx() * powerProgress.value)
-                .coerceAtLeast(0f)
-            if (powerProtrusionPx > 0.25f) {
-                val powerCenterPx = clampCenterInsideAxis(
-                    rawCenter = EdgeOrientationMapper.computeElementCenterPx(
-                        portraitYFraction = settings.powerButtonYFraction,
-                        rotation = displayRotation,
-                        axisLengthPx = axisLen
-                    ),
-                    spreadPx = powerSpreadPx,
-                    axisLengthPx = axisLen
+            if (shouldMergeVolume) {
+                buildMergedEdgePopPath(
+                    path = scratchPath,
+                    canvasWidth = size.width,
+                    canvasHeight = size.height,
+                    firstCenterPx = upCenterPx,
+                    secondCenterPx = downCenterPx,
+                    spreadPx = volSpreadPx,
+                    firstProtrusionPx = upP,
+                    secondProtrusionPx = downP,
+                    screenEdge = screenEdge
                 )
+                drawPath(path = scratchPath, color = Color.Black)
+            } else {
+                if (upP > 0.25f) {
+                    drawSinglePopAtCenter(
+                        path = scratchPath,
+                        canvasWidth = size.width,
+                        canvasHeight = size.height,
+                        centerPx = upCenterPx,
+                        spreadPx = volSpreadPx,
+                        protrusionPx = upP,
+                        screenEdge = screenEdge
+                    )
+                }
+                if (downP > 0.25f) {
+                    drawSinglePopAtCenter(
+                        path = scratchPath,
+                        canvasWidth = size.width,
+                        canvasHeight = size.height,
+                        centerPx = downCenterPx,
+                        spreadPx = volSpreadPx,
+                        protrusionPx = downP,
+                        screenEdge = screenEdge
+                    )
+                }
+            }
+
+            if (settings.enablePowerButtonPop && powerProtrusionPx > 0.25f) {
                 drawSinglePopAtCenter(
                     path = scratchPath,
                     canvasWidth = size.width,
@@ -404,6 +584,156 @@ fun EdgePopStripOverlay(
                     protrusionPx = powerProtrusionPx,
                     screenEdge = screenEdge
                 )
+            }
+        }
+    }
+}
+
+fun androidx.compose.ui.graphics.drawscope.DrawScope.drawFlatTopGlowLine(
+    canvasWidth: Float,
+    canvasHeight: Float,
+    startPosPx: Float,
+    endPosPx: Float,
+    protrusionPx: Float,
+    screenEdge: ScreenEdge
+) {
+    if (protrusionPx <= 0.25f || startPosPx >= endPosPx) return
+    val totalSpanPx = endPosPx - startPosPx
+    val shoulderLen = (totalSpanPx * 0.22f).coerceIn(4f, (totalSpanPx * 0.38f).coerceAtLeast(4f))
+    val peakAlpha = 0.22f
+    val peakColor = android.graphics.Color.argb((peakAlpha * 255).toInt(), 255, 255, 255)
+    val transparentColor = android.graphics.Color.argb(0, 255, 255, 255)
+
+    when (screenEdge) {
+        ScreenEdge.RIGHT,
+        ScreenEdge.LEFT -> {
+            val isRight = screenEdge == ScreenEdge.RIGHT
+            val edgeX = if (isRight) canvasWidth else 0f
+            val dir = if (isRight) -1f else 1f
+            val apexX = edgeX + dir * protrusionPx
+
+            val topShoulderEnd = startPosPx + shoulderLen
+            val bottomShoulderStart = endPosPx - shoulderLen
+
+            val q0X = 0.5f * edgeX + 0.5f * apexX
+            val q0Y = startPosPx + 0.5f * shoulderLen
+
+            val q1X = 0.25f * edgeX + 0.75f * apexX
+            val q1Y = topShoulderEnd - 0.375f * shoulderLen
+
+            val q2X = apexX
+            val q2Y = topShoulderEnd - 0.25f * shoulderLen
+
+            val q3X = apexX
+            val q3Y = topShoulderEnd
+
+            val b0X = apexX
+            val b0Y = bottomShoulderStart
+
+            val b1X = apexX
+            val b1Y = bottomShoulderStart + 0.25f * shoulderLen
+
+            val b2X = 0.75f * apexX + 0.25f * edgeX
+            val b2Y = bottomShoulderStart + 0.375f * shoulderLen
+
+            val b3X = 0.5f * apexX + 0.5f * edgeX
+            val b3Y = endPosPx - 0.5f * shoulderLen
+
+            val glowLen = b3Y - q0Y
+            if (glowLen <= 2f) return
+
+            val glowPath = android.graphics.Path().apply {
+                moveTo(q0X, q0Y)
+                cubicTo(q1X, q1Y, q2X, q2Y, q3X, q3Y)
+                lineTo(b0X, b0Y)
+                cubicTo(b1X, b1Y, b2X, b2Y, b3X, b3Y)
+            }
+
+            val frac = ((0.5f * shoulderLen) / glowLen).coerceIn(0.08f, 0.40f)
+
+            val shader = android.graphics.LinearGradient(
+                apexX, q0Y,
+                apexX, b3Y,
+                intArrayOf(transparentColor, peakColor, peakColor, transparentColor),
+                floatArrayOf(0f, frac, 1f - frac, 1f),
+                android.graphics.Shader.TileMode.CLAMP
+            )
+            val paint = android.graphics.Paint().apply {
+                isAntiAlias = true
+                this.shader = shader
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = 2.8.dp.toPx()
+                strokeCap = android.graphics.Paint.Cap.ROUND
+                maskFilter = android.graphics.BlurMaskFilter(2.2.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+            }
+            drawIntoCanvas { canvas ->
+                canvas.nativeCanvas.drawPath(glowPath, paint)
+            }
+        }
+
+        ScreenEdge.TOP,
+        ScreenEdge.BOTTOM -> {
+            val isTop = screenEdge == ScreenEdge.TOP
+            val edgeY = if (isTop) 0f else canvasHeight
+            val dir = if (isTop) 1f else -1f
+            val apexY = edgeY + dir * protrusionPx
+
+            val leftShoulderEnd = startPosPx + shoulderLen
+            val rightShoulderStart = endPosPx - shoulderLen
+
+            val q0X = startPosPx + 0.5f * shoulderLen
+            val q0Y = 0.5f * edgeY + 0.5f * apexY
+
+            val q1X = leftShoulderEnd - 0.375f * shoulderLen
+            val q1Y = 0.25f * edgeY + 0.75f * apexY
+
+            val q2X = leftShoulderEnd - 0.25f * shoulderLen
+            val q2Y = apexY
+
+            val q3X = leftShoulderEnd
+            val q3Y = apexY
+
+            val b0X = rightShoulderStart
+            val b0Y = apexY
+
+            val b1X = rightShoulderStart + 0.25f * shoulderLen
+            val b1Y = apexY
+
+            val b2X = rightShoulderStart + 0.375f * shoulderLen
+            val b2Y = 0.75f * apexY + 0.25f * edgeY
+
+            val b3X = endPosPx - 0.5f * shoulderLen
+            val b3Y = 0.5f * apexY + 0.5f * edgeY
+
+            val glowLen = b3X - q0X
+            if (glowLen <= 2f) return
+
+            val glowPath = android.graphics.Path().apply {
+                moveTo(q0X, q0Y)
+                cubicTo(q1X, q1Y, q2X, q2Y, q3X, q3Y)
+                lineTo(b0X, b0Y)
+                cubicTo(b1X, b1Y, b2X, b2Y, b3X, b3Y)
+            }
+
+            val frac = ((0.5f * shoulderLen) / glowLen).coerceIn(0.08f, 0.40f)
+
+            val shader = android.graphics.LinearGradient(
+                q0X, apexY,
+                b3X, apexY,
+                intArrayOf(transparentColor, peakColor, peakColor, transparentColor),
+                floatArrayOf(0f, frac, 1f - frac, 1f),
+                android.graphics.Shader.TileMode.CLAMP
+            )
+            val paint = android.graphics.Paint().apply {
+                isAntiAlias = true
+                this.shader = shader
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = 2.8.dp.toPx()
+                strokeCap = android.graphics.Paint.Cap.ROUND
+                maskFilter = android.graphics.BlurMaskFilter(2.2.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+            }
+            drawIntoCanvas { canvas ->
+                canvas.nativeCanvas.drawPath(glowPath, paint)
             }
         }
     }

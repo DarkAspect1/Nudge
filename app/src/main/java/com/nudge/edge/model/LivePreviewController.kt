@@ -39,6 +39,10 @@ object LivePreviewController {
             LivePreviewState(activeTarget = target, isLandscapePreview = isLandscape)
         }
         _state.value = update(base.copy(activeTarget = target, isLandscapePreview = isLandscape))
+        autoHideJob = scope.launch {
+            delay(4000L)
+            _state.value = LivePreviewState(activeTarget = PreviewTarget.NONE)
+        }
     }
 
     fun onSliderRelease(holdDurationMs: Long = 800L) {

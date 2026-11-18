@@ -17,6 +17,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.DoNotDisturbOn
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsOff
@@ -41,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -156,69 +159,70 @@ fun buildOrganicBezelPath(
 ) {
     path.reset()
     if (width <= 0f || height <= 0f) return
+    val bleed = 6f
 
     when (screenEdge) {
         ScreenEdge.LEFT -> {
             val curveZone = (height * 0.30f).coerceIn(minCurveZonePx, maxCurveZonePx).coerceAtMost(height * 0.45f)
-            path.moveTo(0f, 0f)
+            path.moveTo(-bleed, 0f)
             path.cubicTo(
-                x1 = 0f,         y1 = curveZone * 0.55f,
+                x1 = -bleed,     y1 = curveZone * 0.55f,
                 x2 = width,      y2 = curveZone * 0.45f,
                 x3 = width,      y3 = curveZone
             )
             path.lineTo(width, height - curveZone)
             path.cubicTo(
                 x1 = width,      y1 = height - (curveZone * 0.45f),
-                x2 = 0f,         y2 = height - (curveZone * 0.55f),
-                x3 = 0f,         y3 = height
+                x2 = -bleed,     y2 = height - (curveZone * 0.55f),
+                x3 = -bleed,     y3 = height
             )
             path.close()
         }
         ScreenEdge.RIGHT -> {
             val curveZone = (height * 0.30f).coerceIn(minCurveZonePx, maxCurveZonePx).coerceAtMost(height * 0.45f)
-            path.moveTo(width, 0f)
+            path.moveTo(width + bleed, 0f)
             path.cubicTo(
-                x1 = width,      y1 = curveZone * 0.55f,
-                x2 = 0f,         y2 = curveZone * 0.45f,
-                x3 = 0f,         y3 = curveZone
+                x1 = width + bleed, y1 = curveZone * 0.55f,
+                x2 = 0f,            y2 = curveZone * 0.45f,
+                x3 = 0f,            y3 = curveZone
             )
             path.lineTo(0f, height - curveZone)
             path.cubicTo(
-                x1 = 0f,         y1 = height - (curveZone * 0.45f),
-                x2 = width,      y2 = height - (curveZone * 0.55f),
-                x3 = width,      y3 = height
+                x1 = 0f,            y1 = height - (curveZone * 0.45f),
+                x2 = width + bleed, y2 = height - (curveZone * 0.55f),
+                x3 = width + bleed, y3 = height
             )
             path.close()
         }
         ScreenEdge.TOP -> {
             val curveZone = (width * 0.30f).coerceIn(minCurveZonePx, maxCurveZonePx).coerceAtMost(width * 0.45f)
-            path.moveTo(0f, 0f)
+            path.moveTo(0f, -bleed)
             path.cubicTo(
-                x1 = curveZone * 0.55f, y1 = 0f,
+                x1 = curveZone * 0.55f, y1 = -bleed,
                 x2 = curveZone * 0.45f, y2 = height,
                 x3 = curveZone,         y3 = height
             )
             path.lineTo(width - curveZone, height)
             path.cubicTo(
                 x1 = width - (curveZone * 0.45f), y1 = height,
-                x2 = width - (curveZone * 0.55f), y2 = 0f,
-                x3 = width,                       y3 = 0f
+                x2 = width - (curveZone * 0.55f), y2 = -bleed,
+                x3 = width,                       y3 = -bleed
             )
             path.close()
         }
         ScreenEdge.BOTTOM -> {
             val curveZone = (width * 0.30f).coerceIn(minCurveZonePx, maxCurveZonePx).coerceAtMost(width * 0.45f)
-            path.moveTo(0f, height)
+            path.moveTo(0f, height + bleed)
             path.cubicTo(
-                x1 = curveZone * 0.55f, y1 = height,
+                x1 = curveZone * 0.55f, y1 = height + bleed,
                 x2 = curveZone * 0.45f, y2 = 0f,
                 x3 = curveZone,         y3 = 0f
             )
             path.lineTo(width - curveZone, 0f)
             path.cubicTo(
                 x1 = width - (curveZone * 0.45f), y1 = 0f,
-                x2 = width - (curveZone * 0.55f), y2 = height,
-                x3 = width,                       y3 = height
+                x2 = width - (curveZone * 0.55f), y2 = height + bleed,
+                x3 = width,                       y3 = height + bleed
             )
             path.close()
         }
@@ -240,6 +244,7 @@ fun DndSilentBezelOverlay(
     unfocusedOffsetDp: Float = 38f,
     fluidityPercent: Int = 80,
     showLabel: Boolean = true,
+    onDismiss: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -282,15 +287,21 @@ fun DndSilentBezelOverlay(
         return
     }
 
+    val currentOnSelectState by rememberUpdatedState(onSelectState)
+    val currentIsSilentOrDndActive by rememberUpdatedState(isSilentOrDndActive)
+    val currentIsVisible by rememberUpdatedState(isVisible)
+    val currentOnPauseAutoHideTimer by rememberUpdatedState(onPauseAutoHideTimer)
+    val currentOnRestartAutoHideTimer by rememberUpdatedState(onRestartAutoHideTimer)
+
     val focusProgress = remember { Animatable(if (isSilentOrDndActive) 0f else 1f) }
     var isFingerTouchingPanel by remember { mutableStateOf(false) }
     val isPanelBusy = isFingerTouchingPanel || focusProgress.isRunning
 
     LaunchedEffect(isPanelBusy) {
         if (isPanelBusy) {
-            onPauseAutoHideTimer()
+            currentOnPauseAutoHideTimer()
         } else {
-            onRestartAutoHideTimer()
+            currentOnRestartAutoHideTimer()
         }
     }
 
@@ -315,7 +326,7 @@ fun DndSilentBezelOverlay(
     val slot0Coord = centerCoord + ((0f - animatedFocus) * slotSpacing)
     val slot1Coord = centerCoord + ((1f - animatedFocus) * slotSpacing)
 
-    val activeSlot0Color = if (modeType == DndModeType.DND_ON_OFF) Color(0xFF5E5CE6) else ActiveSilentRed
+    val activeSlot0Color = if (modeType == DndModeType.DND_ON_OFF) Color(0xFF7D7AFF) else ActiveSilentRed
     val slot0Color = activeSlot0Color
     val slot0Scale = 0.82f + 0.18f * (1f - animatedFocus)
     val slot0Alpha = 0.45f + 0.55f * (1f - animatedFocus)
@@ -355,6 +366,11 @@ fun DndSilentBezelOverlay(
 
     Box(
         modifier = modifier
+            .pointerInput(Unit) {
+                detectTapGestures {
+                    onDismiss()
+                }
+            }
             .graphicsLayer {
                 when (screenEdge) {
                     ScreenEdge.LEFT -> {
@@ -404,49 +420,61 @@ fun DndSilentBezelOverlay(
                         .width(widthDp.dp)
                         .height(heightDp.dp)
                         .pointerInput(Unit) {
-                            coroutineScope {
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false)
-                                    isFingerTouchingPanel = true
-                                    onPauseAutoHideTimer()
-                                    try {
-                                        var lastPos = down.position
-                                        while (true) {
-                                            val event = awaitPointerEvent()
-                                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                            if (!change.pressed) break
-                                            val delta = change.position.y - lastPos.y
-                                            lastPos = change.position
-                                            if (delta != 0f) {
-                                                change.consume()
-                                                launch {
-                                                    val stepDelta = -delta / slotSpacing
-                                                    focusProgress.snapTo(
-                                                        (focusProgress.value + stepDelta).coerceIn(0f, 1f)
-                                                    )
-                                                }
-                                            }
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                isFingerTouchingPanel = true
+                                currentOnPauseAutoHideTimer()
+                                var totalDelta = 0f
+                                var lastPos = down.position
+                                var completedNaturally = false
+                                try {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (!change.pressed) {
+                                            completedNaturally = true
+                                            break
                                         }
-                                    } finally {
-                                        val targetSlot = if (focusProgress.value < 0.5f) 0 else 1
-                                        val newState = (targetSlot == 0)
-                                        if (newState != isSilentOrDndActive) {
-                                            onSelectState(newState)
-                                        }
-                                        launch {
-                                            try {
-                                                focusProgress.animateTo(
-                                                    targetValue = targetSlot.toFloat(),
-                                                    animationSpec = spring(
-                                                        dampingRatio = Spring.DampingRatioNoBouncy,
-                                                        stiffness = Spring.StiffnessMediumLow
-                                                    )
+                                        val delta = change.position.y - lastPos.y
+                                        lastPos = change.position
+                                        totalDelta += delta
+                                        if (delta != 0f) {
+                                            change.consume()
+                                            coroutineScope.launch {
+                                                val stepDelta = -delta / slotSpacing
+                                                focusProgress.snapTo(
+                                                    (focusProgress.value + stepDelta).coerceIn(0f, 1f)
                                                 )
-                                            } finally {
-                                                isFingerTouchingPanel = false
                                             }
                                         }
                                     }
+                                } finally {
+                                    isFingerTouchingPanel = false
+                                }
+
+                                val touchSlopPx = with(density) { 8.dp.toPx() }
+                                val isTap = kotlin.math.abs(totalDelta) < touchSlopPx
+                                val targetSlot = if (completedNaturally) {
+                                    if (isTap) {
+                                        if (down.position.y < centerCoord) 0 else 1
+                                    } else {
+                                        if (focusProgress.value < 0.5f) 0 else 1
+                                    }
+                                } else {
+                                    if (currentIsSilentOrDndActive) 0 else 1
+                                }
+                                val newState = (targetSlot == 0)
+                                if (completedNaturally && currentIsVisible) {
+                                    currentOnSelectState(newState)
+                                }
+                                coroutineScope.launch {
+                                    focusProgress.animateTo(
+                                        targetValue = targetSlot.toFloat(),
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = Spring.StiffnessMediumLow
+                                        )
+                                    )
                                 }
                             }
                         }
@@ -490,7 +518,7 @@ fun DndSilentBezelOverlay(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null
                                 ) {
-                                    onSelectState(true)
+                                    currentOnSelectState(true)
                                     coroutineScope.launch {
                                         focusProgress.animateTo(
                                             targetValue = 0f,
@@ -504,7 +532,7 @@ fun DndSilentBezelOverlay(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (modeType == DndModeType.DND_ON_OFF) Icons.Rounded.DoNotDisturbOn else Icons.Rounded.NotificationsOff,
+                                imageVector = if (modeType == DndModeType.DND_ON_OFF) Icons.Rounded.Bedtime else Icons.Rounded.NotificationsOff,
                                 contentDescription = null,
                                 tint = slot0Color,
                                 modifier = Modifier
@@ -522,7 +550,7 @@ fun DndSilentBezelOverlay(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null
                                 ) {
-                                    onSelectState(false)
+                                    currentOnSelectState(false)
                                     coroutineScope.launch {
                                         focusProgress.animateTo(
                                             targetValue = 1f,
@@ -536,7 +564,7 @@ fun DndSilentBezelOverlay(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.Notifications,
+                                imageVector = if (modeType == DndModeType.DND_ON_OFF) Icons.Rounded.Bedtime else Icons.Rounded.Notifications,
                                 contentDescription = null,
                                 tint = slot1Color,
                                 modifier = Modifier
@@ -576,49 +604,61 @@ fun DndSilentBezelOverlay(
                         .width(widthDp.dp)
                         .height(heightDp.dp)
                         .pointerInput(Unit) {
-                            coroutineScope {
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false)
-                                    isFingerTouchingPanel = true
-                                    onPauseAutoHideTimer()
-                                    try {
-                                        var lastPos = down.position
-                                        while (true) {
-                                            val event = awaitPointerEvent()
-                                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                            if (!change.pressed) break
-                                            val delta = change.position.x - lastPos.x
-                                            lastPos = change.position
-                                            if (delta != 0f) {
-                                                change.consume()
-                                                launch {
-                                                    val stepDelta = -delta / slotSpacing
-                                                    focusProgress.snapTo(
-                                                        (focusProgress.value + stepDelta).coerceIn(0f, 1f)
-                                                    )
-                                                }
-                                            }
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                isFingerTouchingPanel = true
+                                currentOnPauseAutoHideTimer()
+                                var totalDelta = 0f
+                                var lastPos = down.position
+                                var completedNaturally = false
+                                try {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (!change.pressed) {
+                                            completedNaturally = true
+                                            break
                                         }
-                                    } finally {
-                                        val targetSlot = if (focusProgress.value < 0.5f) 0 else 1
-                                        val newState = (targetSlot == 0)
-                                        if (newState != isSilentOrDndActive) {
-                                            onSelectState(newState)
-                                        }
-                                        launch {
-                                            try {
-                                                focusProgress.animateTo(
-                                                    targetValue = targetSlot.toFloat(),
-                                                    animationSpec = spring(
-                                                        dampingRatio = Spring.DampingRatioNoBouncy,
-                                                        stiffness = Spring.StiffnessMediumLow
-                                                    )
+                                        val delta = change.position.x - lastPos.x
+                                        lastPos = change.position
+                                        totalDelta += delta
+                                        if (delta != 0f) {
+                                            change.consume()
+                                            coroutineScope.launch {
+                                                val stepDelta = -delta / slotSpacing
+                                                focusProgress.snapTo(
+                                                    (focusProgress.value + stepDelta).coerceIn(0f, 1f)
                                                 )
-                                            } finally {
-                                                isFingerTouchingPanel = false
                                             }
                                         }
                                     }
+                                } finally {
+                                    isFingerTouchingPanel = false
+                                }
+
+                                val touchSlopPx = with(density) { 8.dp.toPx() }
+                                val isTap = kotlin.math.abs(totalDelta) < touchSlopPx
+                                val targetSlot = if (completedNaturally) {
+                                    if (isTap) {
+                                        if (down.position.x < centerCoord) 0 else 1
+                                    } else {
+                                        if (focusProgress.value < 0.5f) 0 else 1
+                                    }
+                                } else {
+                                    if (currentIsSilentOrDndActive) 0 else 1
+                                }
+                                val newState = (targetSlot == 0)
+                                if (completedNaturally && currentIsVisible) {
+                                    currentOnSelectState(newState)
+                                }
+                                coroutineScope.launch {
+                                    focusProgress.animateTo(
+                                        targetValue = targetSlot.toFloat(),
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = Spring.StiffnessMediumLow
+                                        )
+                                    )
                                 }
                             }
                         }
@@ -662,7 +702,7 @@ fun DndSilentBezelOverlay(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null
                                 ) {
-                                    onSelectState(true)
+                                    currentOnSelectState(true)
                                     coroutineScope.launch {
                                         focusProgress.animateTo(
                                             targetValue = 0f,
@@ -676,7 +716,7 @@ fun DndSilentBezelOverlay(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (modeType == DndModeType.DND_ON_OFF) Icons.Rounded.DoNotDisturbOn else Icons.Rounded.NotificationsOff,
+                                imageVector = if (modeType == DndModeType.DND_ON_OFF) Icons.Rounded.Bedtime else Icons.Rounded.NotificationsOff,
                                 contentDescription = null,
                                 tint = slot0Color,
                                 modifier = Modifier
@@ -694,7 +734,7 @@ fun DndSilentBezelOverlay(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null
                                 ) {
-                                    onSelectState(false)
+                                    currentOnSelectState(false)
                                     coroutineScope.launch {
                                         focusProgress.animateTo(
                                             targetValue = 1f,
@@ -708,7 +748,7 @@ fun DndSilentBezelOverlay(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.Notifications,
+                                imageVector = if (modeType == DndModeType.DND_ON_OFF) Icons.Rounded.Bedtime else Icons.Rounded.Notifications,
                                 contentDescription = null,
                                 tint = slot1Color,
                                 modifier = Modifier

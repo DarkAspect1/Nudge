@@ -4,13 +4,18 @@ import android.graphics.BlurMaskFilter
 import android.graphics.Paint
 import android.graphics.drawable.Drawable
 import android.media.AudioManager
+import android.view.View
 import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import com.nudge.edge.data.ActiveMediaApp
+import com.nudge.edge.service.OverlayBlurController
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -90,6 +95,7 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -102,6 +108,7 @@ import com.nudge.edge.model.NudgeIcons
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
+import com.nudge.edge.data.FineVolumeController
 import com.nudge.edge.data.VolumeController
 import com.nudge.edge.model.ScreenEdge
 import kotlinx.coroutines.delay
@@ -133,6 +140,7 @@ private data class MixerChannelItem(
     val isPrimary: Boolean,
     val maxVolumeLimit: Int = 100,
     val customAppIcon: Drawable? = null,
+    val streamType: Int? = null,
     val onIconTap: () -> Unit,
     val onValueChange: (Float) -> Unit
 )
@@ -188,92 +196,155 @@ fun buildAttachedMixerHousingPath(
     height: Float,
     screenEdge: ScreenEdge,
     cornerRadiusPx: Float,
-    flareRadiusPx: Float
+    innerPadPx: Float = 8f,
+    flareHeightPx: Float = 10f,
+    flareWidthPx: Float = 18f
 ) {
     path.reset()
     if (width <= 0f || height <= 0f) return
-    val r = cornerRadiusPx.coerceIn(4f, minOf(width, height) * 0.4f)
-    val flare = flareRadiusPx.coerceIn(8f, height * 0.35f)
+
+    val flareH = flareHeightPx.coerceIn(4f, height * 0.25f)
+    val flareW = flareWidthPx.coerceIn(8f, width * 0.45f)
+    val topFlat = flareH
+    val bottomFlat = height - flareH
+    val flatSpan = (bottomFlat - topFlat).coerceAtLeast(10f)
+    val r = cornerRadiusPx.coerceIn(4f, minOf(width - flareW, flatSpan) * 0.5f)
 
     when (screenEdge) {
         ScreenEdge.RIGHT -> {
-            path.moveTo(width, 0f)
+            val bezelX = width
+            val flareStartX = (width - flareW).coerceAtLeast(r)
+
+            path.moveTo(bezelX, 0f)
             path.cubicTo(
-                width, flare * 0.45f,
-                width - flare * 0.45f, flare,
-                width - flare, flare
+                bezelX - flareW * 0.20f, topFlat * 0.70f,
+                flareStartX + flareW * 0.35f, topFlat,
+                flareStartX, topFlat
             )
-            path.lineTo(r, flare)
-            path.cubicTo(0f, flare, 0f, flare + r, 0f, flare + r)
-            path.lineTo(0f, height - flare - r)
-            path.cubicTo(0f, height - flare, r, height - flare, r, height - flare)
-            path.lineTo(width - flare, height - flare)
+            path.lineTo(r, topFlat)
+            path.arcTo(
+                rect = Rect(0f, topFlat, r * 2f, topFlat + r * 2f),
+                startAngleDegrees = -90f,
+                sweepAngleDegrees = -90f,
+                forceMoveTo = false
+            )
+            path.lineTo(0f, bottomFlat - r)
+            path.arcTo(
+                rect = Rect(0f, bottomFlat - r * 2f, r * 2f, bottomFlat),
+                startAngleDegrees = 180f,
+                sweepAngleDegrees = -90f,
+                forceMoveTo = false
+            )
+            path.lineTo(flareStartX, bottomFlat)
             path.cubicTo(
-                width - flare * 0.45f, height - flare,
-                width, height - flare * 0.45f,
-                width, height
+                flareStartX + flareW * 0.35f, bottomFlat,
+                bezelX - flareW * 0.20f, height - topFlat * 0.70f,
+                bezelX, height
             )
-            path.lineTo(width, 0f)
+            path.lineTo(bezelX, 0f)
             path.close()
         }
         ScreenEdge.LEFT -> {
-            path.moveTo(0f, 0f)
+            val bezelX = 0f
+            val flareStartX = flareW.coerceAtMost(width - r)
+
+            path.moveTo(bezelX, 0f)
             path.cubicTo(
-                0f, flare * 0.45f,
-                flare * 0.45f, flare,
-                flare, flare
+                bezelX + flareW * 0.20f, topFlat * 0.70f,
+                flareStartX - flareW * 0.35f, topFlat,
+                flareStartX, topFlat
             )
-            path.lineTo(width - r, flare)
-            path.cubicTo(width, flare, width, flare + r, width, flare + r)
-            path.lineTo(width, height - flare - r)
-            path.cubicTo(width, height - flare, width - r, height - flare, width - r, height - flare)
-            path.lineTo(flare, height - flare)
+            path.lineTo(width - r, topFlat)
+            path.arcTo(
+                rect = Rect(width - r * 2f, topFlat, width, topFlat + r * 2f),
+                startAngleDegrees = -90f,
+                sweepAngleDegrees = 90f,
+                forceMoveTo = false
+            )
+            path.lineTo(width, bottomFlat - r)
+            path.arcTo(
+                rect = Rect(width - r * 2f, bottomFlat - r * 2f, width, bottomFlat),
+                startAngleDegrees = 0f,
+                sweepAngleDegrees = 90f,
+                forceMoveTo = false
+            )
+            path.lineTo(flareStartX, bottomFlat)
             path.cubicTo(
-                flare * 0.45f, height - flare,
-                0f, height - flare * 0.45f,
-                0f, height
+                flareStartX - flareW * 0.35f, bottomFlat,
+                bezelX + flareW * 0.20f, height - topFlat * 0.70f,
+                bezelX, height
             )
-            path.lineTo(0f, 0f)
+            path.lineTo(bezelX, 0f)
             path.close()
         }
         ScreenEdge.TOP -> {
-            path.moveTo(0f, 0f)
+            val bezelY = 0f
+            val flareStartY = flareW.coerceAtMost(height - r)
+            val leftFlat = flareH
+            val rightFlat = width - flareH
+
+            path.moveTo(0f, bezelY)
             path.cubicTo(
-                flare * 0.45f, 0f,
-                flare, flare * 0.45f,
-                flare, flare
+                leftFlat * 0.70f, bezelY + flareW * 0.20f,
+                leftFlat, flareStartY - flareW * 0.35f,
+                leftFlat, flareStartY
             )
-            path.lineTo(flare, height - r)
-            path.cubicTo(flare, height, flare + r, height, flare + r, height)
-            path.lineTo(width - flare - r, height)
-            path.cubicTo(width - flare, height, width - flare, height - r, width - flare, height - r)
-            path.lineTo(width - flare, flare)
+            path.lineTo(leftFlat, height - r)
+            path.arcTo(
+                rect = Rect(leftFlat, height - r * 2f, leftFlat + r * 2f, height),
+                startAngleDegrees = 180f,
+                sweepAngleDegrees = -90f,
+                forceMoveTo = false
+            )
+            path.lineTo(rightFlat - r, height)
+            path.arcTo(
+                rect = Rect(rightFlat - r * 2f, height - r * 2f, rightFlat, height),
+                startAngleDegrees = 90f,
+                sweepAngleDegrees = -90f,
+                forceMoveTo = false
+            )
+            path.lineTo(rightFlat, flareStartY)
             path.cubicTo(
-                width - flare, flare * 0.45f,
-                width - flare * 0.45f, 0f,
-                width, 0f
+                rightFlat, flareStartY - flareW * 0.35f,
+                width - leftFlat * 0.70f, bezelY + flareW * 0.20f,
+                width, bezelY
             )
-            path.lineTo(0f, 0f)
+            path.lineTo(0f, bezelY)
             path.close()
         }
         ScreenEdge.BOTTOM -> {
-            path.moveTo(0f, height)
+            val bezelY = height
+            val flareStartY = (height - flareW).coerceAtLeast(r)
+            val leftFlat = flareH
+            val rightFlat = width - flareH
+
+            path.moveTo(0f, bezelY)
             path.cubicTo(
-                flare * 0.45f, height,
-                flare, height - flare * 0.45f,
-                flare, height - flare
+                leftFlat * 0.70f, bezelY - flareW * 0.20f,
+                leftFlat, flareStartY + flareW * 0.35f,
+                leftFlat, flareStartY
             )
-            path.lineTo(flare, r)
-            path.cubicTo(flare, 0f, flare + r, 0f, flare + r, 0f)
-            path.lineTo(width - flare - r, 0f)
-            path.cubicTo(width - flare, 0f, width - flare, r, width - flare, r)
-            path.lineTo(width - flare, height - flare)
+            path.lineTo(leftFlat, r)
+            path.arcTo(
+                rect = Rect(leftFlat, 0f, leftFlat + r * 2f, r * 2f),
+                startAngleDegrees = 180f,
+                sweepAngleDegrees = 90f,
+                forceMoveTo = false
+            )
+            path.lineTo(rightFlat - r, 0f)
+            path.arcTo(
+                rect = Rect(rightFlat - r * 2f, 0f, rightFlat, r * 2f),
+                startAngleDegrees = -90f,
+                sweepAngleDegrees = 90f,
+                forceMoveTo = false
+            )
+            path.lineTo(rightFlat, flareStartY)
             path.cubicTo(
-                width - flare, height - flare * 0.45f,
-                width - flare * 0.45f, height,
-                width, height
+                rightFlat, flareStartY + flareW * 0.35f,
+                width - leftFlat * 0.70f, bezelY - flareW * 0.20f,
+                width, bezelY
             )
-            path.lineTo(0f, height)
+            path.lineTo(0f, bezelY)
             path.close()
         }
     }
@@ -302,6 +373,7 @@ fun QuickVolumeModal(
     sliderEdge: ScreenEdge = ScreenEdge.RIGHT,
     sliderYFraction: Float = 0.5f,
     sliderXFraction: Float = 0.5f,
+    sliderCenterDp: Float? = null,
     sliderEdgeInsetDp: Float = 0f,
     volumeSliderFluidityPercent: Int = 75,
     onMusicFractionChanged: (Float) -> Unit,
@@ -319,23 +391,55 @@ fun QuickVolumeModal(
     notifyMaxVolumeLimit: Int = mediaMaxVolumeLimit,
     alarmMaxVolumeLimit: Int = mediaMaxVolumeLimit,
     activeMediaApps: List<ActiveMediaApp> = emptyList(),
-    onAppVolumeChanged: ((Int, Int, Int) -> Unit)? = null
+    onAppVolumeChanged: ((Int, Float) -> Unit)? = null,
+    fineVolumeController: FineVolumeController? = null,
+    ringFractionExternal: Float? = null,
+    notificationFractionExternal: Float? = null,
+    alarmFractionExternal: Float? = null,
+    onStreamFractionChanged: ((Int, Float) -> Unit)? = null,
+    onStreamScrubStateChanged: ((Int?, Boolean) -> Unit)? = null,
+    isHoldingVolUpAtMax: Boolean = false,
+    isHoldingVolDownAtMin: Boolean = false,
+    pillTransparency: Int = 0,
+    volumeSliderBlur: Float = 0f,
+    pillBlurDp: Float = 0f
 ) {
     val coroutineScope = rememberCoroutineScope()
     val expansionProgress = remember { Animatable(if (isVisible) 1f else 0f) }
 
-    var callFraction by remember {
-        mutableFloatStateOf(callFractionExternal ?: volumeController.getStreamFraction(AudioManager.STREAM_VOICE_CALL))
+    var localCallFraction by remember {
+        mutableFloatStateOf(
+            callFractionExternal
+                ?: fineVolumeController?.readSystemNormalizedVolume(AudioManager.STREAM_VOICE_CALL)
+                ?: volumeController.getStreamFraction(AudioManager.STREAM_VOICE_CALL)
+        )
     }
-    var ringFraction by remember {
-        mutableFloatStateOf(volumeController.getStreamFraction(AudioManager.STREAM_RING))
+    var localRingFraction by remember {
+        mutableFloatStateOf(
+            ringFractionExternal
+                ?: fineVolumeController?.readSystemNormalizedVolume(AudioManager.STREAM_RING)
+                ?: volumeController.getStreamFraction(AudioManager.STREAM_RING)
+        )
     }
-    var notificationFraction by remember {
-        mutableFloatStateOf(volumeController.getStreamFraction(AudioManager.STREAM_NOTIFICATION))
+    var localNotificationFraction by remember {
+        mutableFloatStateOf(
+            notificationFractionExternal
+                ?: fineVolumeController?.readSystemNormalizedVolume(AudioManager.STREAM_NOTIFICATION)
+                ?: volumeController.getStreamFraction(AudioManager.STREAM_NOTIFICATION)
+        )
     }
-    var alarmFraction by remember {
-        mutableFloatStateOf(volumeController.getStreamFraction(AudioManager.STREAM_ALARM))
+    var localAlarmFraction by remember {
+        mutableFloatStateOf(
+            alarmFractionExternal
+                ?: fineVolumeController?.readSystemNormalizedVolume(AudioManager.STREAM_ALARM)
+                ?: volumeController.getStreamFraction(AudioManager.STREAM_ALARM)
+        )
     }
+
+    val callFraction = callFractionExternal ?: localCallFraction
+    val ringFraction = ringFractionExternal ?: localRingFraction
+    val notificationFraction = notificationFractionExternal ?: localNotificationFraction
+    val alarmFraction = alarmFractionExternal ?: localAlarmFraction
 
     var lastCallOnFraction by remember {
         mutableFloatStateOf(if (callFraction > 0.01f) callFraction else 0.5f)
@@ -353,7 +457,9 @@ fun QuickVolumeModal(
         mutableFloatStateOf(if (alarmFraction > 0.01f) alarmFraction else 0.5f)
     }
 
-    val containerColor = if (lightMode) Color(0xFFEFEFF4) else Color.Black
+    val transFraction = (pillTransparency / 100f).coerceIn(0f, 1f)
+    val housingAlpha = (1f - transFraction).coerceIn(0f, 1f)
+    val containerColor = if (lightMode) Color(0xFFEFEFF4).copy(alpha = housingAlpha) else Color.Black.copy(alpha = housingAlpha)
     val titleColor = if (lightMode) Color(0xFF1C1C1E) else Color.White
     val labelColor = if (lightMode) Color(0xFF1C1C1E).copy(alpha = 0.88f) else Color.White.copy(alpha = 0.90f)
     val percentColor = if (lightMode) Color(0xFF636366) else Color.White.copy(alpha = 0.62f)
@@ -370,33 +476,40 @@ fun QuickVolumeModal(
     fun startCollapseAndDismiss() {
         if (isClosing) return
         isClosing = true
+        currentOnDismiss()
         coroutineScope.launch {
             expansionProgress.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(
-                    durationMillis = 220,
-                    easing = FastOutSlowInEasing
+                animationSpec = spring(
+                    dampingRatio = 0.82f,
+                    stiffness = 420f
                 )
             )
             isClosing = false
-            currentOnDismiss()
         }
     }
 
     LaunchedEffect(isVisible) {
         if (isVisible) {
             isClosing = false
-            callFraction = callFractionExternal ?: volumeController.getStreamFraction(AudioManager.STREAM_VOICE_CALL)
-            ringFraction = volumeController.getStreamFraction(AudioManager.STREAM_RING)
-            notificationFraction = volumeController.getStreamFraction(AudioManager.STREAM_NOTIFICATION)
-            alarmFraction = volumeController.getStreamFraction(AudioManager.STREAM_ALARM)
+            localCallFraction = fineVolumeController?.readSystemNormalizedVolume(AudioManager.STREAM_VOICE_CALL)
+                ?: volumeController.getStreamFraction(AudioManager.STREAM_VOICE_CALL)
+            localRingFraction = fineVolumeController?.readSystemNormalizedVolume(AudioManager.STREAM_RING)
+                ?: volumeController.getStreamFraction(AudioManager.STREAM_RING)
+            localNotificationFraction = fineVolumeController?.readSystemNormalizedVolume(AudioManager.STREAM_NOTIFICATION)
+                ?: volumeController.getStreamFraction(AudioManager.STREAM_NOTIFICATION)
+            localAlarmFraction = fineVolumeController?.readSystemNormalizedVolume(AudioManager.STREAM_ALARM)
+                ?: volumeController.getStreamFraction(AudioManager.STREAM_ALARM)
             pointerDownActive = false
             interactionEpoch++
+            if (expansionProgress.value > 0.01f) {
+                expansionProgress.snapTo(0f)
+            }
             expansionProgress.animateTo(
                 targetValue = 1f,
                 animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioNoBouncy,
-                    stiffness = Spring.StiffnessMediumLow
+                    dampingRatio = 0.76f,
+                    stiffness = 320f
                 )
             )
         } else {
@@ -405,13 +518,22 @@ fun QuickVolumeModal(
             if (expansionProgress.value > 0.01f) {
                 expansionProgress.animateTo(
                     targetValue = 0f,
-                    animationSpec = tween(180, easing = FastOutSlowInEasing)
+                    animationSpec = spring(
+                        dampingRatio = 0.82f,
+                        stiffness = 360f
+                    )
                 )
             }
         }
     }
 
-    LaunchedEffect(musicFractionExternal, callFractionExternal) {
+    LaunchedEffect(
+        musicFractionExternal,
+        callFractionExternal,
+        ringFractionExternal,
+        notificationFractionExternal,
+        alarmFractionExternal
+    ) {
         if (isVisible) {
             interactionEpoch++
         }
@@ -461,23 +583,41 @@ fun QuickVolumeModal(
                     fraction = callFraction.coerceIn(0f, 1f),
                     isPrimary = isCallActive,
                     maxVolumeLimit = callMaxVolumeLimit,
+                    streamType = AudioManager.STREAM_VOICE_CALL,
                     onIconTap = {
-                        val next = if (callFraction > 0.005f) {
+                        val minFrac = fineVolumeController?.getStreamMinNormalizedFraction(AudioManager.STREAM_VOICE_CALL) ?: 0.10f
+                        val next = if (callFraction > minFrac + 0.01f) {
                             lastCallOnFraction = callFraction
-                            0f
+                            minFrac
                         } else {
-                            lastCallOnFraction.coerceAtLeast(0.25f)
+                            lastCallOnFraction.coerceAtLeast(0.35f)
                         }
-                        volumeController.setStreamFraction(AudioManager.STREAM_VOICE_CALL, next)
-                        callFraction = volumeController.getStreamFraction(AudioManager.STREAM_VOICE_CALL)
-                        onCallFractionChanged?.invoke(callFraction)
+                        if (onStreamFractionChanged != null) {
+                            onStreamFractionChanged(AudioManager.STREAM_VOICE_CALL, next)
+                        } else if (fineVolumeController != null) {
+                            val applied = fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_VOICE_CALL, next)
+                            localCallFraction = applied
+                        } else {
+                            volumeController.setStreamFraction(AudioManager.STREAM_VOICE_CALL, next)
+                            localCallFraction = volumeController.getStreamFraction(AudioManager.STREAM_VOICE_CALL)
+                        }
+                        onCallFractionChanged?.invoke(next)
                         if (hapticsEnabled) volumeController.triggerHaptic()
                     },
                     onValueChange = { value ->
-                        if (value > 0.01f) lastCallOnFraction = value
-                        callFraction = value
-                        volumeController.setStreamFraction(AudioManager.STREAM_VOICE_CALL, value)
-                        onCallFractionChanged?.invoke(value)
+                        val minFrac = fineVolumeController?.getStreamMinNormalizedFraction(AudioManager.STREAM_VOICE_CALL) ?: 0.10f
+                        val effectiveValue = value.coerceIn(minFrac, 1f)
+                        if (effectiveValue > 0.01f) lastCallOnFraction = effectiveValue
+                        localCallFraction = effectiveValue
+                        if (onStreamFractionChanged != null) {
+                            onStreamFractionChanged(AudioManager.STREAM_VOICE_CALL, effectiveValue)
+                        } else if (fineVolumeController != null) {
+                            val applied = fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_VOICE_CALL, effectiveValue)
+                            localCallFraction = applied
+                        } else {
+                            volumeController.setStreamFraction(AudioManager.STREAM_VOICE_CALL, effectiveValue)
+                        }
+                        onCallFractionChanged?.invoke(effectiveValue)
                     }
                 )
             )
@@ -489,8 +629,9 @@ fun QuickVolumeModal(
                 label = if (isBluetoothConnected) "Bluetooth" else "Media",
                 streamIcon = if (isBluetoothConnected) MixerStreamIcon.BLUETOOTH else MixerStreamIcon.MEDIA,
                 fraction = musicFractionExternal.coerceIn(0f, 1f),
-                isPrimary = !isCallActive,
+                isPrimary = true,
                 maxVolumeLimit = mediaMaxVolumeLimit,
+                streamType = AudioManager.STREAM_MUSIC,
                 onIconTap = {
                     val next = if (musicFractionExternal > 0.005f) {
                         lastMusicOnFraction = musicFractionExternal
@@ -516,6 +657,7 @@ fun QuickVolumeModal(
                 fraction = ringFraction.coerceIn(0f, 1f),
                 isPrimary = false,
                 maxVolumeLimit = ringMaxVolumeLimit,
+                streamType = AudioManager.STREAM_RING,
                 onIconTap = {
                     val next = if (ringFraction > 0.005f) {
                         lastRingOnFraction = ringFraction
@@ -523,14 +665,27 @@ fun QuickVolumeModal(
                     } else {
                         lastRingOnFraction.coerceAtLeast(0.25f)
                     }
-                    volumeController.setStreamFraction(AudioManager.STREAM_RING, next)
-                    ringFraction = volumeController.getStreamFraction(AudioManager.STREAM_RING)
+                    if (onStreamFractionChanged != null) {
+                        onStreamFractionChanged(AudioManager.STREAM_RING, next)
+                    } else if (fineVolumeController != null) {
+                        fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_RING, next)
+                        localRingFraction = fineVolumeController.readSystemNormalizedVolume(AudioManager.STREAM_RING)
+                    } else {
+                        volumeController.setStreamFraction(AudioManager.STREAM_RING, next)
+                        localRingFraction = volumeController.getStreamFraction(AudioManager.STREAM_RING)
+                    }
                     if (hapticsEnabled) volumeController.triggerHaptic()
                 },
                 onValueChange = { value ->
                     if (value > 0.01f) lastRingOnFraction = value
-                    ringFraction = value
-                    volumeController.setStreamFraction(AudioManager.STREAM_RING, value)
+                    localRingFraction = value
+                    if (onStreamFractionChanged != null) {
+                        onStreamFractionChanged(AudioManager.STREAM_RING, value)
+                    } else if (fineVolumeController != null) {
+                        fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_RING, value)
+                    } else {
+                        volumeController.setStreamFraction(AudioManager.STREAM_RING, value)
+                    }
                 }
             )
         )
@@ -543,6 +698,7 @@ fun QuickVolumeModal(
                 fraction = notificationFraction.coerceIn(0f, 1f),
                 isPrimary = false,
                 maxVolumeLimit = notifyMaxVolumeLimit,
+                streamType = AudioManager.STREAM_NOTIFICATION,
                 onIconTap = {
                     val next = if (notificationFraction > 0.005f) {
                         lastNotifyOnFraction = notificationFraction
@@ -550,14 +706,27 @@ fun QuickVolumeModal(
                     } else {
                         lastNotifyOnFraction.coerceAtLeast(0.25f)
                     }
-                    volumeController.setStreamFraction(AudioManager.STREAM_NOTIFICATION, next)
-                    notificationFraction = volumeController.getStreamFraction(AudioManager.STREAM_NOTIFICATION)
+                    if (onStreamFractionChanged != null) {
+                        onStreamFractionChanged(AudioManager.STREAM_NOTIFICATION, next)
+                    } else if (fineVolumeController != null) {
+                        fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_NOTIFICATION, next)
+                        localNotificationFraction = fineVolumeController.readSystemNormalizedVolume(AudioManager.STREAM_NOTIFICATION)
+                    } else {
+                        volumeController.setStreamFraction(AudioManager.STREAM_NOTIFICATION, next)
+                        localNotificationFraction = volumeController.getStreamFraction(AudioManager.STREAM_NOTIFICATION)
+                    }
                     if (hapticsEnabled) volumeController.triggerHaptic()
                 },
                 onValueChange = { value ->
                     if (value > 0.01f) lastNotifyOnFraction = value
-                    notificationFraction = value
-                    volumeController.setStreamFraction(AudioManager.STREAM_NOTIFICATION, value)
+                    localNotificationFraction = value
+                    if (onStreamFractionChanged != null) {
+                        onStreamFractionChanged(AudioManager.STREAM_NOTIFICATION, value)
+                    } else if (fineVolumeController != null) {
+                        fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_NOTIFICATION, value)
+                    } else {
+                        volumeController.setStreamFraction(AudioManager.STREAM_NOTIFICATION, value)
+                    }
                 }
             )
         )
@@ -570,6 +739,7 @@ fun QuickVolumeModal(
                 fraction = alarmFraction.coerceIn(0f, 1f),
                 isPrimary = false,
                 maxVolumeLimit = alarmMaxVolumeLimit,
+                streamType = AudioManager.STREAM_ALARM,
                 onIconTap = {
                     val next = if (alarmFraction > 0.005f) {
                         lastAlarmOnFraction = alarmFraction
@@ -577,14 +747,27 @@ fun QuickVolumeModal(
                     } else {
                         lastAlarmOnFraction.coerceAtLeast(0.25f)
                     }
-                    volumeController.setStreamFraction(AudioManager.STREAM_ALARM, next)
-                    alarmFraction = volumeController.getStreamFraction(AudioManager.STREAM_ALARM)
+                    if (onStreamFractionChanged != null) {
+                        onStreamFractionChanged(AudioManager.STREAM_ALARM, next)
+                    } else if (fineVolumeController != null) {
+                        fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_ALARM, next)
+                        localAlarmFraction = fineVolumeController.readSystemNormalizedVolume(AudioManager.STREAM_ALARM)
+                    } else {
+                        volumeController.setStreamFraction(AudioManager.STREAM_ALARM, next)
+                        localAlarmFraction = volumeController.getStreamFraction(AudioManager.STREAM_ALARM)
+                    }
                     if (hapticsEnabled) volumeController.triggerHaptic()
                 },
                 onValueChange = { value ->
                     if (value > 0.01f) lastAlarmOnFraction = value
-                    alarmFraction = value
-                    volumeController.setStreamFraction(AudioManager.STREAM_ALARM, value)
+                    localAlarmFraction = value
+                    if (onStreamFractionChanged != null) {
+                        onStreamFractionChanged(AudioManager.STREAM_ALARM, value)
+                    } else if (fineVolumeController != null) {
+                        fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_ALARM, value)
+                    } else {
+                        volumeController.setStreamFraction(AudioManager.STREAM_ALARM, value)
+                    }
                 }
             )
         )
@@ -595,18 +778,18 @@ fun QuickVolumeModal(
                     id = "app_${app.uid}",
                     label = app.appLabel,
                     streamIcon = MixerStreamIcon.MEDIA,
-                    fraction = (app.currentSteps.toFloat() / app.maxVolumeLimit.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f),
+                    fraction = app.volumeFraction.coerceIn(0f, 1f),
                     isPrimary = false,
                     maxVolumeLimit = app.maxVolumeLimit,
                     customAppIcon = app.appIcon,
+                    streamType = null,
                     onIconTap = {
-                        val next = if (app.currentSteps > 0) 0 else app.maxVolumeLimit
-                        onAppVolumeChanged?.invoke(app.uid, next, app.maxVolumeLimit)
+                        val next = if (app.volumeFraction > 0.005f) 0f else 1f
+                        onAppVolumeChanged?.invoke(app.uid, next)
                         if (hapticsEnabled) volumeController.triggerHaptic()
                     },
                     onValueChange = { value ->
-                        val targetSteps = (value * app.maxVolumeLimit).roundToInt().coerceIn(0, app.maxVolumeLimit)
-                        onAppVolumeChanged?.invoke(app.uid, targetSteps, app.maxVolumeLimit)
+                        onAppVolumeChanged?.invoke(app.uid, value.coerceIn(0f, 1f))
                     }
                 )
             )
@@ -615,13 +798,61 @@ fun QuickVolumeModal(
         list
     }
 
-    val orderedChannels = remember(allChannels, sliderEdge) {
-        val primary = allChannels.firstOrNull { it.isPrimary } ?: allChannels.first()
-        val rest = allChannels.filter { it != primary }
-        if (sliderEdge == ScreenEdge.RIGHT) {
-            rest + primary
+    val primaryFirstChannels = remember(allChannels, isCallActive) {
+        if (allChannels.isEmpty()) {
+            emptyList()
+        } else if (isCallActive) {
+            val call = allChannels.firstOrNull { it.id == "call" }
+            val media = allChannels.firstOrNull { it.id == "media" }
+            val rest = allChannels.filter { it.id != "call" && it.id != "media" }
+            val ordered = mutableListOf<MixerChannelItem>()
+            if (call != null) ordered.add(call)
+            if (media != null) ordered.add(media)
+            ordered.addAll(rest)
+            ordered
         } else {
-            listOf(primary) + rest
+            val media = allChannels.firstOrNull { it.id == "media" }
+                ?: allChannels.firstOrNull { it.isPrimary }
+                ?: allChannels.firstOrNull()
+            if (media == null) {
+                emptyList()
+            } else {
+                val call = allChannels.firstOrNull { it.id == "call" }
+                val rest = allChannels.filter { channel ->
+                    channel.id != media.id && (call == null || channel.id != call.id)
+                }
+                val ordered = mutableListOf<MixerChannelItem>()
+                ordered.add(media)
+                if (call != null) ordered.add(call)
+                ordered.addAll(rest)
+                ordered
+            }
+        }
+    }
+
+    val orderedChannels = remember(primaryFirstChannels, sliderEdge, isCallActive) {
+        if (sliderEdge != ScreenEdge.RIGHT || primaryFirstChannels.isEmpty()) {
+            primaryFirstChannels
+        } else {
+            if (isCallActive) {
+                val call = primaryFirstChannels.firstOrNull { it.id == "call" }
+                val media = primaryFirstChannels.firstOrNull { it.id == "media" }
+                val rest = primaryFirstChannels.filter { it.id != "call" && it.id != "media" }
+                val primarySideLast = mutableListOf<MixerChannelItem>()
+                primarySideLast.addAll(rest)
+                if (media != null) primarySideLast.add(media)
+                if (call != null) primarySideLast.add(call)
+                primarySideLast
+            } else {
+                val media = primaryFirstChannels.first()
+                val call = primaryFirstChannels.getOrNull(1)?.takeIf { it.id == "call" }
+                val rest = primaryFirstChannels.drop(if (call == null) 1 else 2)
+                val primarySideLast = mutableListOf<MixerChannelItem>()
+                primarySideLast.addAll(rest)
+                if (call != null) primarySideLast.add(call)
+                primarySideLast.add(media)
+                primarySideLast
+            }
         }
     }
 
@@ -658,6 +889,30 @@ fun QuickVolumeModal(
             .background(Color.Black.copy(alpha = 0.28f * animFraction.coerceIn(0f, 1f)))
     }
 
+    var isAnySliderStretching by remember { mutableStateOf(false) }
+    var modalStretchOriginY by remember { mutableFloatStateOf(0.5f) }
+    val isHoldingVolumeBoundary = isHoldingVolUpAtMax || isHoldingVolDownAtMin
+    val effectiveIsStretching = isAnySliderStretching || isHoldingVolumeBoundary
+    val effectiveStretchOriginY = when {
+        isHoldingVolUpAtMax -> 1f
+        isHoldingVolDownAtMin -> 0f
+        else -> modalStretchOriginY
+    }
+    val animatedModalStretchOriginY by animateFloatAsState(
+        targetValue = effectiveStretchOriginY,
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 320f),
+        label = "modalStretchOriginY"
+    )
+    val modalStretchScale by animateFloatAsState(
+        targetValue = if (effectiveIsStretching) 1.08f else 1.0f,
+        animationSpec = if (effectiveIsStretching) {
+            spring(dampingRatio = 0.75f, stiffness = 280f)
+        } else {
+            spring(dampingRatio = 0.80f, stiffness = 340f)
+        },
+        label = "modalStretchScale"
+    )
+
     BoxWithConstraints(
         modifier = modalModifier
     ) {
@@ -665,28 +920,37 @@ fun QuickVolumeModal(
         val screenH = maxHeight
         val numChannels = orderedChannels.size
 
+        val insetDp = sliderEdgeInsetDp.coerceAtLeast(0f)
         val channelSpacingDp = 10f
-        val horizontalPaddingDp = 24f
-        val contentWidthDp = (numChannels * sliderWidthDp) + ((numChannels - 1) * channelSpacingDp) + horizontalPaddingDp
+        val innerHousingPadDp = HUD_CUTOUT_INNER_PAD_DP
+        val attachedInnerPaddingDp = 8f
+        val attachedEdgePaddingDp = insetDp
+        val attachedHorizontalPaddingDp = attachedInnerPaddingDp + attachedEdgePaddingDp
+        val attachedContentWidthDp = (numChannels * sliderWidthDp) + ((numChannels - 1) * channelSpacingDp) + attachedHorizontalPaddingDp
+        val floatingCardPadDp = 8f
+        val floatingHorizontalPaddingDp = floatingCardPadDp * 2f
+        val floatingContentWidthDp = (numChannels * sliderWidthDp) + ((numChannels - 1) * channelSpacingDp) + floatingHorizontalPaddingDp
+
         val effectivePillHeightDp = computeHudDrawnPillSpanDp(sliderHeightDp)
-        val attachedContentHeightDp = effectivePillHeightDp + 50f
-        val contentHeightDp = effectivePillHeightDp + 58f
+        val attachedContentHeightDp = effectivePillHeightDp
+        val contentHeightDp = effectivePillHeightDp
 
         val scale = (audioMixerScalePercent / 100f).coerceIn(0.5f, 1.5f)
 
         if (isAudioMixerAttachedToSlider) {
             val isVerticalEdge = sliderEdge == ScreenEdge.LEFT || sliderEdge == ScreenEdge.RIGHT
-            val singleSliderProtrusionDp = (sliderWidthDp + HUD_CUTOUT_INNER_PAD_DP).dp
+            val singleSliderProtrusionDp = computeHudCutoutThicknessDp(sliderWidthDp, insetDp).dp
             val singleSliderLengthDp = effectivePillHeightDp.dp
 
             val progress = animFraction.coerceIn(0f, 1f)
-            val tailSpanDp = 34.dp
+            val flareHeightDp = 10f
+            val tailSpanDp = (attachedInnerPaddingDp + flareHeightDp).dp
 
             val maxAvailableWidthDp = (screenW - 24.dp).value
-            val effectiveChannelSpacingDp = if (contentWidthDp > maxAvailableWidthDp) 8f else 10f
-            val availableForPills = maxAvailableWidthDp - horizontalPaddingDp - ((numChannels - 1) * effectiveChannelSpacingDp)
+            val effectiveChannelSpacingDp = if (attachedContentWidthDp > maxAvailableWidthDp) 8f else 10f
+            val availableForPills = maxAvailableWidthDp - attachedHorizontalPaddingDp - ((numChannels - 1) * effectiveChannelSpacingDp)
             val fitPillWidthDp = (availableForPills / numChannels.coerceAtLeast(1)).coerceIn(34f, sliderWidthDp)
-            val effectiveContentWidthDp = (numChannels * fitPillWidthDp) + ((numChannels - 1) * effectiveChannelSpacingDp) + horizontalPaddingDp
+            val effectiveContentWidthDp = (numChannels * fitPillWidthDp) + ((numChannels - 1) * effectiveChannelSpacingDp) + attachedHorizontalPaddingDp
 
             val currentHousingWidthDp: androidx.compose.ui.unit.Dp
             val currentHousingHeightDp: androidx.compose.ui.unit.Dp
@@ -701,7 +965,8 @@ fun QuickVolumeModal(
                 currentHousingWidthDp = animatedProtrusion
                 currentHousingHeightDp = totalSpan
 
-                val top = (screenH * sliderYFraction) - (totalSpan / 2f)
+                val center = sliderCenterDp ?: (screenH.value * sliderYFraction)
+                val top = (center - totalSpan.value / 2f).dp
                 val left = if (sliderEdge == ScreenEdge.RIGHT) screenW - animatedProtrusion else 0.dp
                 housingOffset = Offset(left.value, top.value)
             } else {
@@ -713,16 +978,30 @@ fun QuickVolumeModal(
                 currentHousingWidthDp = totalSpan
                 currentHousingHeightDp = animatedProtrusion
 
-                val left = (screenW * sliderXFraction) - (totalSpan / 2f)
+                val center = sliderCenterDp ?: (screenW.value * sliderXFraction)
+                val left = (center - totalSpan.value / 2f).dp
                 val top = if (sliderEdge == ScreenEdge.BOTTOM) screenH - animatedProtrusion else 0.dp
                 housingOffset = Offset(left.value, top.value)
             }
 
             val housingPath = remember { Path() }
-            val bezelShape = remember(housingPath, currentHousingWidthDp, currentHousingHeightDp) {
+            val bezelShape = remember(sliderEdge, sliderCornerRadiusDp, attachedInnerPaddingDp, flareHeightDp) {
                 object : Shape {
                     override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
-                        return Outline.Generic(housingPath)
+                        val path = Path()
+                        with(density) {
+                            buildAttachedMixerHousingPath(
+                                path = path,
+                                width = size.width,
+                                height = size.height,
+                                screenEdge = sliderEdge,
+                                cornerRadiusPx = sliderCornerRadiusDp.dp.toPx(),
+                                innerPadPx = attachedInnerPaddingDp.dp.toPx(),
+                                flareHeightPx = flareHeightDp.dp.toPx(),
+                                flareWidthPx = 18.dp.toPx()
+                            )
+                        }
+                        return Outline.Generic(path)
                     }
                 }
             }
@@ -733,13 +1012,16 @@ fun QuickVolumeModal(
                     .size(currentHousingWidthDp, currentHousingHeightDp)
                     .graphicsLayer {
                         transformOrigin = when (sliderEdge) {
-                            ScreenEdge.LEFT -> TransformOrigin(0f, 0.5f)
-                            ScreenEdge.RIGHT -> TransformOrigin(1f, 0.5f)
+                            ScreenEdge.LEFT -> TransformOrigin(0f, animatedModalStretchOriginY)
+                            ScreenEdge.RIGHT -> TransformOrigin(1f, animatedModalStretchOriginY)
                             ScreenEdge.TOP -> TransformOrigin(0.5f, 0f)
                             ScreenEdge.BOTTOM -> TransformOrigin(0.5f, 1f)
                         }
-                        scaleX = scale
-                        scaleY = scale
+                        val clampedProgress = animFraction.coerceIn(0f, 1f)
+                        val stretchProgress = 0.88f + 0.12f * clampedProgress
+                        scaleX = scale * (if (isVerticalEdge) stretchProgress else 1f)
+                        scaleY = scale * modalStretchScale * (if (isVerticalEdge) 1f else stretchProgress)
+                        alpha = clampedProgress
                     }
                     .onGloballyPositioned { coordinates ->
                         cardBounds = coordinates.boundsInRoot()
@@ -774,7 +1056,9 @@ fun QuickVolumeModal(
                         height = size.height,
                         screenEdge = sliderEdge,
                         cornerRadiusPx = sliderCornerRadiusDp.dp.toPx(),
-                        flareRadiusPx = 22.dp.toPx()
+                        innerPadPx = attachedInnerPaddingDp.dp.toPx(),
+                        flareHeightPx = flareHeightDp.dp.toPx(),
+                        flareWidthPx = 18.dp.toPx()
                     )
 
                     drawIntoCanvas { canvas ->
@@ -785,108 +1069,88 @@ fun QuickVolumeModal(
                         }
                         canvas.nativeCanvas.drawPath(housingPath.asAndroidPath(), shadowPaint)
                     }
-                    drawPath(housingPath, Color.Black)
+                    drawPath(housingPath, Color.Black.copy(alpha = housingAlpha))
                 }
 
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .clip(bezelShape)
+                        .clip(bezelShape),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Column(
+                    val attachedScrollState = rememberScrollState()
+                    LaunchedEffect(orderedChannels.size, isVisible) {
+                        if (isVisible && sliderEdge == ScreenEdge.RIGHT && effectiveContentWidthDp > maxAvailableWidthDp) {
+                            attachedScrollState.scrollTo(attachedScrollState.maxValue)
+                        }
+                    }
+
+                    Row(
                         modifier = Modifier
-                            .fillMaxSize()
+                            .fillMaxWidth()
                             .padding(
-                                start = if (sliderEdge == ScreenEdge.LEFT) 14.dp else 12.dp,
-                                end = if (sliderEdge == ScreenEdge.RIGHT) 14.dp else 12.dp,
-                                top = 26.dp,
-                                bottom = 20.dp
-                            ),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .graphicsLayer {
-                                    alpha = ((progress - 0.25f) / 0.75f).coerceIn(0f, 1f)
-                                },
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Audio Mixer",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = titleColor,
-                                maxLines = 1,
-                                softWrap = false,
-                                modifier = Modifier.padding(start = 4.dp)
+                                start = if (sliderEdge == ScreenEdge.LEFT) attachedEdgePaddingDp.dp else attachedInnerPaddingDp.dp,
+                                end = if (sliderEdge == ScreenEdge.RIGHT) attachedEdgePaddingDp.dp else attachedInnerPaddingDp.dp,
+                                top = if (sliderEdge == ScreenEdge.TOP) attachedEdgePaddingDp.dp else attachedInnerPaddingDp.dp,
+                                bottom = if (sliderEdge == ScreenEdge.BOTTOM) attachedEdgePaddingDp.dp else attachedInnerPaddingDp.dp
                             )
+                            .then(if (effectiveContentWidthDp > maxAvailableWidthDp) Modifier.horizontalScroll(attachedScrollState) else Modifier),
+                        horizontalArrangement = when (sliderEdge) {
+                            ScreenEdge.RIGHT -> Arrangement.End
+                            ScreenEdge.LEFT -> Arrangement.Start
+                            else -> Arrangement.Center
+                        },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        orderedChannels.forEachIndexed { index, channel ->
+                            if (index > 0) {
+                                Spacer(modifier = Modifier.width(effectiveChannelSpacingDp.dp))
+                            }
+                            val isPrimary = channel.isPrimary
+                            val pillAlpha = if (isPrimary) 1f else ((progress - 0.20f) / 0.80f).coerceIn(0f, 1f)
+                            val pillTranslationX = if (isPrimary || !isVerticalEdge) 0f else {
+                                val dir = if (sliderEdge == ScreenEdge.RIGHT) 1f else -1f
+                                (1f - progress) * dir * 40f
+                            }
+                            val pillTranslationY = if (isPrimary || isVerticalEdge) 0f else {
+                                val dir = if (sliderEdge == ScreenEdge.TOP) -1f else 1f
+                                (1f - progress) * dir * 40f
+                            }
 
-                            Surface(
-                                onClick = onOpenSettings,
-                                shape = CircleShape,
-                                color = settingsBg,
-                                modifier = Modifier.size(28.dp)
+                            Box(
+                                modifier = Modifier.graphicsLayer {
+                                    alpha = pillAlpha
+                                    translationX = pillTranslationX
+                                    translationY = pillTranslationY
+                                }
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Settings,
-                                        contentDescription = "Open Nudge Settings",
-                                        tint = titleColor,
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        val attachedScrollState = rememberScrollState()
-                        LaunchedEffect(orderedChannels.size, isVisible) {
-                            if (isVisible && sliderEdge == ScreenEdge.RIGHT && effectiveContentWidthDp > maxAvailableWidthDp) {
-                                attachedScrollState.scrollTo(attachedScrollState.maxValue)
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .then(if (effectiveContentWidthDp > maxAvailableWidthDp) Modifier.horizontalScroll(attachedScrollState) else Modifier),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.Bottom
-                        ) {
-                            orderedChannels.forEachIndexed { index, channel ->
-                                if (index > 0) {
-                                    Spacer(modifier = Modifier.width(effectiveChannelSpacingDp.dp))
-                                }
-                                val isPrimary = channel.isPrimary
-                                val pillAlpha = if (isPrimary) 1f else ((progress - 0.20f) / 0.80f).coerceIn(0f, 1f)
-                                val slideDir = if (sliderEdge == ScreenEdge.RIGHT) -1f else 1f
-                                val pillTranslationX = if (isPrimary) 0f else (1f - progress) * slideDir * 32f
-
-                                Box(
-                                    modifier = Modifier.graphicsLayer {
-                                        alpha = pillAlpha
-                                        translationX = pillTranslationX
+                                VerticalStreamPill(
+                                    label = channel.label,
+                                    streamIcon = channel.streamIcon,
+                                    fraction = channel.fraction,
+                                    pillWidthDp = fitPillWidthDp,
+                                    pillHeightDp = effectivePillHeightDp,
+                                    pillCornerRadiusDp = sliderCornerRadiusDp,
+                                    labelColor = labelColor,
+                                    percentColor = percentColor,
+                                    iconTintOverride = if (channel.streamIcon == MixerStreamIcon.BLUETOOTH) BluetoothRed else null,
+                                    maxVolumeLimit = channel.maxVolumeLimit,
+                                    customAppIcon = channel.customAppIcon,
+                                    streamType = channel.streamType,
+                                    pillTransparency = pillTransparency,
+                                    volumeSliderBlur = volumeSliderBlur,
+                                    pillBlurDp = pillBlurDp,
+                                    isModalVisible = isVisible && animFraction > 0.01f,
+                                    onIconTap = channel.onIconTap,
+                                    onValueChange = channel.onValueChange,
+                                    onScrubStateChanged = { scrubbing ->
+                                        onStreamScrubStateChanged?.invoke(channel.streamType, scrubbing)
+                                    },
+                                    onStretchStateChanged = { stretching, originY ->
+                                        isAnySliderStretching = stretching
+                                        if (stretching) modalStretchOriginY = originY
                                     }
-                                ) {
-                                    VerticalStreamPill(
-                                        label = channel.label,
-                                        streamIcon = channel.streamIcon,
-                                        fraction = channel.fraction,
-                                        pillWidthDp = fitPillWidthDp,
-                                        pillHeightDp = effectivePillHeightDp,
-                                        pillCornerRadiusDp = sliderCornerRadiusDp,
-                                        labelColor = labelColor,
-                                        percentColor = percentColor,
-                                        iconTintOverride = if (channel.streamIcon == MixerStreamIcon.BLUETOOTH) BluetoothRed else null,
-                                        maxVolumeLimit = channel.maxVolumeLimit,
-                                        customAppIcon = channel.customAppIcon,
-                                        onIconTap = channel.onIconTap,
-                                        onValueChange = channel.onValueChange
-                                    )
-                                }
+                                )
                             }
                         }
                     }
@@ -894,8 +1158,8 @@ fun QuickVolumeModal(
             }
         } else {
             val maxFloatingW = screenW - 16.dp
-            val cardW = minOf(contentWidthDp.dp, maxFloatingW)
-            val cardH = (effectivePillHeightDp + 76f).dp
+            val cardW = minOf(floatingContentWidthDp.dp, maxFloatingW)
+            val cardH = (effectivePillHeightDp + floatingCardPadDp * 2f).dp
             val pad = 8.dp
 
             val availX = (screenW - cardW).coerceAtLeast(0.dp)
@@ -908,13 +1172,13 @@ fun QuickVolumeModal(
                     .offset(x = freeX, y = freeY)
                     .size(cardW, cardH)
                     .graphicsLayer {
-                        transformOrigin = TransformOrigin(0.5f, 0.5f)
-                        val clamped = animFraction.coerceIn(0f, 1.05f)
-                        val enterScale = (0.90f + 0.10f * clamped) * scale
+                        transformOrigin = TransformOrigin(0.5f, animatedModalStretchOriginY)
+                        val clamped = animFraction.coerceIn(0f, 1f)
+                        val enterScale = (0.86f + 0.14f * clamped) * scale
                         scaleX = enterScale
-                        scaleY = enterScale
-                        alpha = animFraction.coerceIn(0f, 1f)
-                        translationY = 14.dp.toPx() * (1f - animFraction)
+                        scaleY = enterScale * modalStretchScale
+                        alpha = clamped
+                        translationY = 16.dp.toPx() * (1f - clamped)
                     }
                     .onGloballyPositioned { coordinates ->
                         cardBounds = coordinates.boundsInRoot()
@@ -945,55 +1209,21 @@ fun QuickVolumeModal(
                 color = containerColor,
                 shadowElevation = 20.dp
             ) {
-                Column(
+                Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                        .padding(horizontal = floatingCardPadDp.dp, vertical = floatingCardPadDp.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Audio Mixer",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = titleColor,
-                            maxLines = 1,
-                            softWrap = false,
-                            modifier = Modifier.padding(start = 4.dp)
-                        )
-
-                        Surface(
-                            onClick = onOpenSettings,
-                            shape = CircleShape,
-                            color = settingsBg,
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Settings,
-                                    contentDescription = "Open Nudge Settings",
-                                    tint = titleColor,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                            }
-                        }
-                    }
-
                     val floatingScrollState = rememberScrollState()
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .horizontalScroll(floatingScrollState),
-                        horizontalArrangement = if (contentWidthDp.dp <= cardW - 24.dp) Arrangement.Center else Arrangement.Start,
-                        verticalAlignment = Alignment.Bottom
+                        horizontalArrangement = if (floatingContentWidthDp.dp <= cardW) Arrangement.Center else Arrangement.Start,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        allChannels.forEachIndexed { index, channel ->
+                        primaryFirstChannels.forEachIndexed { index, channel ->
                             if (index > 0) {
                                 Spacer(modifier = Modifier.width(10.dp))
                             }
@@ -1009,9 +1239,24 @@ fun QuickVolumeModal(
                                 iconTintOverride = if (channel.streamIcon == MixerStreamIcon.BLUETOOTH) BluetoothRed else null,
                                 maxVolumeLimit = channel.maxVolumeLimit,
                                 customAppIcon = channel.customAppIcon,
+                                streamType = channel.streamType,
+                                pillTransparency = pillTransparency,
+                                volumeSliderBlur = volumeSliderBlur,
+                                pillBlurDp = pillBlurDp,
+                                isModalVisible = isVisible && animFraction > 0.01f,
                                 onIconTap = channel.onIconTap,
-                                onValueChange = channel.onValueChange
+                                onValueChange = channel.onValueChange,
+                                onScrubStateChanged = { scrubbing ->
+                                    onStreamScrubStateChanged?.invoke(channel.streamType, scrubbing)
+                                },
+                                onStretchStateChanged = { stretching, originY ->
+                                    isAnySliderStretching = stretching
+                                    if (stretching) modalStretchOriginY = originY
+                                }
                             )
+                        }
+                        if (floatingContentWidthDp.dp > cardW) {
+                            Spacer(modifier = Modifier.width(floatingCardPadDp.dp))
                         }
                     }
                 }
@@ -1097,21 +1342,44 @@ private fun VerticalStreamPill(
     iconTintOverride: Color? = null,
     maxVolumeLimit: Int = 100,
     customAppIcon: Drawable? = null,
+    streamType: Int? = null,
+    pillTransparency: Int = 0,
+    volumeSliderBlur: Float = 0f,
+    pillBlurDp: Float = 0f,
+    isModalVisible: Boolean = true,
     onIconTap: () -> Unit,
     onValueChange: (Float) -> Unit,
+    onScrubStateChanged: ((Boolean) -> Unit)? = null,
+    onStretchStateChanged: ((Boolean, Float) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
+    val context = LocalContext.current
+    val blurRadiusPx = OverlayBlurController.computeBlurRadiusPx(volumeSliderBlur, density.density)
+    val isRuntimeBlurActive = OverlayBlurController.isRuntimeBlurActive(context)
+    val isSamsungActive = OverlayBlurController.isSamsungBackendActive()
+
     val currentOnValueChange by rememberUpdatedState(onValueChange)
     val currentOnIconTap by rememberUpdatedState(onIconTap)
+    val currentOnScrubStateChanged by rememberUpdatedState(onScrubStateChanged)
 
-    var isScrubbing by remember { mutableStateOf(false) }
-    var scrubFraction by remember { mutableFloatStateOf(fraction.coerceIn(0f, 1f)) }
+    val isCall = streamType == AudioManager.STREAM_VOICE_CALL
+    val maxCallSteps = (maxVolumeLimit / FineVolumeController.FINE_MULTIPLIER).coerceAtLeast(1)
+    val minFraction = if (isCall) (1f / maxCallSteps.toFloat()).coerceIn(0f, 1f) else 0f
 
-    val isMuted = fraction <= 0.005f
+    var isDragging by remember { mutableStateOf(false) }
+    var localValue by remember { mutableFloatStateOf(fraction.coerceIn(minFraction, 1f)) }
+
+    LaunchedEffect(fraction, isDragging) {
+        if (!isDragging) {
+            localValue = fraction.coerceIn(minFraction, 1f)
+        }
+    }
+
+    val isMuted = if (isCall) false else fraction <= 0.005f
 
     val mediaPainter = rememberVectorPainter(NudgeIcons.BeamedMusicNote)
-    val callPainter = rememberVectorPainter(if (isMuted) Icons.Rounded.PhoneMissed else Icons.Rounded.Call)
+    val callPainter = rememberVectorPainter(Icons.Rounded.Call)
     val btPainter = rememberVectorPainter(Icons.Rounded.Bluetooth)
     val ringPainter = rememberVectorPainter(if (isMuted) Icons.Rounded.NotificationsOff else Icons.Rounded.NotificationsActive)
     val notifyPainter = rememberVectorPainter(if (isMuted) Icons.Rounded.NotificationsOff else Icons.Rounded.Notifications)
@@ -1126,7 +1394,7 @@ private fun VerticalStreamPill(
         MixerStreamIcon.ALARM -> alarmPainter
     }
 
-    val targetNormalizedVolume = if (isScrubbing) scrubFraction else fraction.coerceIn(0f, 1f)
+    val targetNormalizedVolume = if (isDragging) localValue else fraction.coerceIn(minFraction, 1f)
     val animatedVolume by animateFloatAsState(
         targetValue = targetNormalizedVolume,
         animationSpec = spring(
@@ -1135,199 +1403,330 @@ private fun VerticalStreamPill(
         ),
         label = "SmoothMixerVolumeScrub"
     )
-    val clamped = animatedVolume.coerceIn(0f, 1f)
+    val clamped = animatedVolume.coerceIn(minFraction, 1f)
 
     val iconTapThresholdPx = with(density) { (pillWidthDp * 0.90f).dp.toPx() }
-    val tapSlopPx = with(density) { 5.dp.toPx() }
 
-    Column(
-        modifier = modifier.width(pillWidthDp.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(pillWidthDp.dp, pillHeightDp.dp)
-                .pointerInput(pillHeightDp) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        val startPos = down.position
-                        val totalH = size.height.toFloat()
-                        val inIconZone = startPos.y >= (totalH - iconTapThresholdPx)
-                        val touchSlop = viewConfiguration.touchSlop
-                        var isScrubbingGesture = false
-                        var isHorizontalDrag = false
+    var isOverMax by remember { mutableStateOf(false) }
+    var isOverMin by remember { mutableStateOf(false) }
+    var lastStretchOriginY by remember { mutableFloatStateOf(0.5f) }
+    if (isOverMax) {
+        lastStretchOriginY = 1f
+    } else if (isOverMin) {
+        lastStretchOriginY = 0f
+    }
 
-                        try {
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+    val isStretched = (isOverMax || isOverMin) && isDragging
+    val stretchOriginY = if (isOverMax) 1f else 0f
+    val currentOnStretchStateChanged by rememberUpdatedState(onStretchStateChanged)
+    LaunchedEffect(isStretched, stretchOriginY) {
+        currentOnStretchStateChanged?.invoke(isStretched, stretchOriginY)
+    }
+
+    Box(
+        modifier = modifier
+            .size(pillWidthDp.dp, pillHeightDp.dp)
+            .pointerInput(streamType) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val startPos = down.position
+                    val totalH = size.height.toFloat()
+                    val inIconZone = startPos.y >= (totalH - iconTapThresholdPx)
+                    val touchSlop = viewConfiguration.touchSlop
+
+                    fun calculateFraction(position: Offset): Float {
+                        return (1f - (position.y / totalH.coerceAtLeast(1f))).coerceIn(minFraction, 1f)
+                    }
+
+                    var isVerticalDrag = false
+                    var isHorizontalScroll = false
+
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) {
+                                if (!isHorizontalScroll) {
+                                    if (!isVerticalDrag) {
+                                        if (inIconZone) {
+                                            change.consume()
+                                            currentOnIconTap()
+                                        } else {
+                                            change.consume()
+                                            val initialFraction = calculateFraction(startPos)
+                                            localValue = initialFraction
+                                            currentOnValueChange(initialFraction)
+                                        }
+                                    } else {
+                                        change.consume()
+                                    }
+                                }
+                                break
+                            }
+
+                            if (change.positionChanged()) {
                                 val dx = change.position.x - startPos.x
                                 val dy = change.position.y - startPos.y
 
-                                if (!change.pressed) {
-                                    if (!isHorizontalDrag && !isScrubbingGesture) {
-                                        if (inIconZone) {
-                                            currentOnIconTap()
-                                        } else {
-                                            val target = ((totalH - startPos.y) / totalH).coerceIn(0f, 1f)
-                                            scrubFraction = target
-                                            currentOnValueChange(target)
-                                        }
-                                        change.consume()
-                                    }
-                                    break
-                                }
-
-                                if (!isScrubbingGesture && !isHorizontalDrag) {
-                                    if (abs(dx) > touchSlop && abs(dx) > abs(dy)) {
-                                        isHorizontalDrag = true
-                                    } else if (abs(dy) > touchSlop && abs(dy) >= abs(dx)) {
-                                        isScrubbingGesture = true
-                                        isScrubbing = true
+                                if (!isVerticalDrag && !isHorizontalScroll) {
+                                    if (kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
+                                        isHorizontalScroll = true
+                                        break
+                                    } else if (kotlin.math.abs(dy) > touchSlop && kotlin.math.abs(dy) >= kotlin.math.abs(dx)) {
+                                        isVerticalDrag = true
+                                        isDragging = true
+                                        currentOnScrubStateChanged?.invoke(true)
                                     }
                                 }
 
-                                if (isScrubbingGesture) {
-                                    val updated = ((totalH - change.position.y) / totalH).coerceIn(0f, 1f)
-                                    scrubFraction = updated
-                                    currentOnValueChange(updated)
+                                if (isVerticalDrag) {
                                     change.consume()
+                                    val newFraction = calculateFraction(change.position)
+                                    localValue = newFraction
+                                    currentOnValueChange(newFraction)
+                                    isOverMax = change.position.y < 0f || newFraction >= 0.999f
+                                    isOverMin = change.position.y > totalH || newFraction <= minFraction + 0.001f
                                 }
                             }
-                        } finally {
-                            if (isScrubbing) {
-                                isScrubbing = false
+                        }
+                    } finally {
+                        if (isDragging) {
+                            isDragging = false
+                            isOverMax = false
+                            isOverMin = false
+                            currentOnScrubStateChanged?.invoke(false)
+                        }
+                    }
+                }
+            }
+    ) {
+        val radiusPx = with(density) {
+            pillCornerRadiusDp.dp.toPx().coerceIn(0f, minOf(pillWidthDp.dp.toPx(), pillHeightDp.dp.toPx()) * 0.5f)
+        }
+        if (isSamsungActive && blurRadiusPx > 0) {
+            AndroidView(
+                factory = { ctx ->
+                    View(ctx).apply {
+                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    }
+                },
+                update = { view ->
+                    OverlayBlurController.applySamsungTrackBlur(
+                        view = view,
+                        blurRadiusPx = blurRadiusPx,
+                        cornerRadiusPx = radiusPx,
+                        isHudVisible = isModalVisible
+                    )
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val pillW = size.width
+            val pillH = size.height
+            val radius = (pillCornerRadiusDp.dp.toPx()).coerceIn(0f, minOf(pillW, pillH) * 0.5f)
+
+            val pillPath = Path().apply {
+                addRoundRect(
+                    RoundRect(
+                        rect = Rect(0f, 0f, pillW, pillH),
+                        cornerRadius = CornerRadius(radius, radius)
+                    )
+                )
+            }
+
+            val transFraction = (pillTransparency / 100f).coerceIn(0f, 1f)
+            val userUnfilledAlpha = (1f - transFraction).coerceIn(0f, 1f)
+            val effectiveUnfilledAlpha = if (blurRadiusPx > 0 && !isRuntimeBlurActive) {
+                maxOf(userUnfilledAlpha, 0.72f)
+            } else {
+                userUnfilledAlpha
+            }
+
+            if (pillBlurDp > 0.5f) {
+                drawIntoCanvas { canvas ->
+                    val blurPaint = Paint().apply {
+                        isAntiAlias = true
+                        color = android.graphics.Color.argb(
+                            (effectiveUnfilledAlpha * 180).roundToInt().coerceIn(0, 255),
+                            50, 50, 55
+                        )
+                        maskFilter = BlurMaskFilter(
+                            pillBlurDp.dp.toPx(),
+                            BlurMaskFilter.Blur.NORMAL
+                        )
+                    }
+                    canvas.nativeCanvas.drawPath(pillPath.asAndroidPath(), blurPaint)
+                }
+            }
+
+            drawPath(path = pillPath, color = VerticalPillTrack.copy(alpha = effectiveUnfilledAlpha))
+            if (blurRadiusPx > 0 && !isRuntimeBlurActive) {
+                drawPath(
+                    path = pillPath,
+                    color = Color.White.copy(alpha = 0.14f),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+                )
+            }
+
+            val fillTop = (pillH - pillH * clamped).coerceIn(0f, pillH)
+            val currentSteps = if (isCall) {
+                val minFine = 10
+                (clamped * maxVolumeLimit).roundToInt().coerceIn(minFine, maxVolumeLimit)
+            } else {
+                (clamped * maxVolumeLimit).roundToInt().coerceIn(0, maxVolumeLimit)
+            }
+            val counterText = "$currentSteps"
+            val counterTextSize = (pillW * 0.32f).coerceIn(10.dp.toPx(), 13.dp.toPx())
+            val counterCenterY = minOf(pillW * 0.45f, 18.dp.toPx())
+
+            val iconSize = (pillW * 0.52f).coerceIn(16.dp.toPx(), 26.dp.toPx())
+            val iconCenter = Offset(
+                x = pillW * 0.5f,
+                y = pillH - minOf(pillW * 0.50f, 22.dp.toPx())
+            )
+
+            val labelTextSize = (pillW * 0.22f).coerceIn(8.5.dp.toPx(), 10.5.dp.toPx())
+            val maxLabelW = (pillW - 4.dp.toPx()).coerceAtLeast(1f)
+            val displayLabel = if (label.equals("Notification", ignoreCase = true) || label.equals("Notifications", ignoreCase = true)) {
+                "Notif"
+            } else {
+                label
+            }
+            val labelCenterY = iconCenter.y - (iconSize * 0.5f) - 7.dp.toPx()
+
+            clipPath(pillPath) {
+                if (clamped > 0.002f) {
+                    drawRect(
+                        color = VerticalPillFill,
+                        topLeft = Offset(0f, fillTop),
+                        size = Size(pillW, pillH - fillTop)
+                    )
+                }
+
+                if (fillTop > 0f) {
+                    clipRect(0f, 0f, pillW, fillTop) {
+                        val tintColor = iconTintOverride ?: if (isMuted) VerticalIconOffGray else VerticalIconOnDark
+                        drawIntoCanvas { canvas ->
+                            val textPaint = android.graphics.Paint().apply {
+                                isAntiAlias = true
+                                textAlign = android.graphics.Paint.Align.CENTER
+                                textSize = counterTextSize
+                                color = VerticalIconOnDark.toArgb()
+                                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                            }
+                            val baseline = counterCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
+                            canvas.nativeCanvas.drawText(counterText, pillW * 0.5f, baseline, textPaint)
+                        }
+                        drawIntoCanvas { canvas ->
+                            val textPaint = android.graphics.Paint().apply {
+                                isAntiAlias = true
+                                textAlign = android.graphics.Paint.Align.CENTER
+                                textSize = labelTextSize
+                                color = VerticalIconOnDark.toArgb()
+                                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                            }
+                            val fittedLabel = android.text.TextUtils.ellipsize(
+                                displayLabel,
+                                android.text.TextPaint(textPaint),
+                                maxLabelW,
+                                android.text.TextUtils.TruncateAt.END
+                            ).toString()
+                            val baseline = labelCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
+                            canvas.nativeCanvas.drawText(fittedLabel, pillW * 0.5f, baseline, textPaint)
+                        }
+                        if (customAppIcon != null) {
+                            val bitmap = customAppIcon.toBitmap(iconSize.toInt().coerceAtLeast(1), iconSize.toInt().coerceAtLeast(1)).asImageBitmap()
+                            drawImage(
+                                image = bitmap,
+                                topLeft = Offset(iconCenter.x - iconSize * 0.5f, iconCenter.y - iconSize * 0.5f)
+                            )
+                        } else if (streamIcon == MixerStreamIcon.RING) {
+                            drawCustomSpeakerIcon(
+                                center = iconCenter,
+                                size = iconSize,
+                                color = tintColor,
+                                volumeFraction = if (isMuted) 0f else 0.5f,
+                                pathBuffer = Path(),
+                                horizontalShiftUnits = if (isMuted) 0.8f else 2.0f,
+                                wave1Alpha = if (isMuted) 0f else 1f,
+                                wave1Scale = 1f,
+                                wave2Alpha = if (isMuted) 0f else 1f,
+                                wave2Scale = 1f,
+                                wave3Alpha = 0f,
+                                wave3Scale = 0.85f
+                            )
+                        } else if (streamIcon == MixerStreamIcon.MEDIA) {
+                            drawCustomBeamedNoteIcon(center = iconCenter, size = iconSize, color = tintColor)
+                        } else {
+                            translate(left = iconCenter.x - iconSize * 0.5f, top = iconCenter.y - iconSize * 0.5f) {
+                                with(activePainter) {
+                                    draw(size = Size(iconSize, iconSize), colorFilter = ColorFilter.tint(tintColor))
+                                }
                             }
                         }
                     }
                 }
-        ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val pillW = size.width
-                val pillH = size.height
-                val radius = (pillCornerRadiusDp.dp.toPx()).coerceIn(0f, minOf(pillW, pillH) * 0.5f)
 
-                val pillPath = Path().apply {
-                    addRoundRect(
-                        RoundRect(
-                            rect = Rect(0f, 0f, pillW, pillH),
-                            cornerRadius = CornerRadius(radius, radius)
-                        )
-                    )
-                }
-                drawPath(path = pillPath, color = VerticalPillTrack)
-
-                val fillTop = (pillH - pillH * clamped).coerceIn(0f, pillH)
-                val currentSteps = (clamped * maxVolumeLimit).roundToInt().coerceIn(0, maxVolumeLimit)
-                val counterText = "$currentSteps"
-                val counterTextSize = (pillW * 0.32f).coerceIn(10.dp.toPx(), 13.dp.toPx())
-                val counterCenterY = minOf(pillW * 0.45f, 18.dp.toPx())
-
-                clipPath(pillPath) {
-                    if (clamped > 0.002f) {
-                        drawRect(
-                            color = VerticalPillFill,
-                            topLeft = Offset(0f, fillTop),
-                            size = Size(pillW, pillH - fillTop)
-                        )
-                    }
-
-                    val iconSize = (pillW * 0.52f).coerceIn(16.dp.toPx(), 26.dp.toPx())
-                    val iconCenter = Offset(
-                        x = pillW * 0.5f,
-                        y = pillH - minOf(pillW * 0.50f, 22.dp.toPx())
-                    )
-
-                    if (fillTop > 0f) {
-                        clipRect(0f, 0f, pillW, fillTop) {
-                            val tintColor = iconTintOverride ?: if (isMuted) VerticalIconOffGray else VerticalIconOnDark
-                            drawIntoCanvas { canvas ->
-                                val textPaint = android.graphics.Paint().apply {
-                                    isAntiAlias = true
-                                    textAlign = android.graphics.Paint.Align.CENTER
-                                    textSize = counterTextSize
-                                    color = VerticalIconOnDark.toArgb()
-                                    typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
-                                }
-                                val baseline = counterCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
-                                canvas.nativeCanvas.drawText(counterText, pillW * 0.5f, baseline, textPaint)
+                if (fillTop < pillH) {
+                    clipRect(0f, fillTop, pillW, pillH) {
+                        val tintColor = if (isMuted) VerticalIconOffGray else VerticalIconOnWhite
+                        drawIntoCanvas { canvas ->
+                            val textPaint = android.graphics.Paint().apply {
+                                isAntiAlias = true
+                                textAlign = android.graphics.Paint.Align.CENTER
+                                textSize = counterTextSize
+                                color = VerticalIconOnWhite.toArgb()
+                                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                             }
-                            if (customAppIcon != null) {
-                                val bitmap = customAppIcon.toBitmap(iconSize.toInt().coerceAtLeast(1), iconSize.toInt().coerceAtLeast(1)).asImageBitmap()
-                                drawImage(
-                                    image = bitmap,
-                                    topLeft = Offset(iconCenter.x - iconSize * 0.5f, iconCenter.y - iconSize * 0.5f)
-                                )
-                            } else if (streamIcon == MixerStreamIcon.RING) {
-                                drawCustomSpeakerIcon(
-                                    center = iconCenter,
-                                    size = iconSize,
-                                    color = tintColor,
-                                    volumeFraction = if (isMuted) 0f else 0.5f,
-                                    pathBuffer = Path(),
-                                    horizontalShiftUnits = if (isMuted) 0.8f else 2.0f,
-                                    wave1Alpha = if (isMuted) 0f else 1f,
-                                    wave1Scale = 1f,
-                                    wave2Alpha = if (isMuted) 0f else 1f,
-                                    wave2Scale = 1f,
-                                    wave3Alpha = 0f,
-                                    wave3Scale = 0.85f
-                                )
-                            } else if (streamIcon == MixerStreamIcon.MEDIA) {
-                                drawCustomBeamedNoteIcon(center = iconCenter, size = iconSize, color = tintColor)
-                            } else {
-                                translate(left = iconCenter.x - iconSize * 0.5f, top = iconCenter.y - iconSize * 0.5f) {
-                                    with(activePainter) {
-                                        draw(size = Size(iconSize, iconSize), colorFilter = ColorFilter.tint(tintColor))
-                                    }
-                                }
-                            }
+                            val baseline = counterCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
+                            canvas.nativeCanvas.drawText(counterText, pillW * 0.5f, baseline, textPaint)
                         }
-                    }
-
-                    if (fillTop < pillH) {
-                        clipRect(0f, fillTop, pillW, pillH) {
-                            val tintColor = if (isMuted) VerticalIconOffGray else VerticalIconOnWhite
-                            drawIntoCanvas { canvas ->
-                                val textPaint = android.graphics.Paint().apply {
-                                    isAntiAlias = true
-                                    textAlign = android.graphics.Paint.Align.CENTER
-                                    textSize = counterTextSize
-                                    color = VerticalIconOnWhite.toArgb()
-                                    typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
-                                }
-                                val baseline = counterCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
-                                canvas.nativeCanvas.drawText(counterText, pillW * 0.5f, baseline, textPaint)
+                        drawIntoCanvas { canvas ->
+                            val textPaint = android.graphics.Paint().apply {
+                                isAntiAlias = true
+                                textAlign = android.graphics.Paint.Align.CENTER
+                                textSize = labelTextSize
+                                color = VerticalIconOnWhite.toArgb()
+                                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                             }
-                            if (customAppIcon != null) {
-                                val bitmap = customAppIcon.toBitmap(iconSize.toInt().coerceAtLeast(1), iconSize.toInt().coerceAtLeast(1)).asImageBitmap()
-                                drawImage(
-                                    image = bitmap,
-                                    topLeft = Offset(iconCenter.x - iconSize * 0.5f, iconCenter.y - iconSize * 0.5f)
-                                )
-                            } else if (streamIcon == MixerStreamIcon.RING) {
-                                drawCustomSpeakerIcon(
-                                    center = iconCenter,
-                                    size = iconSize,
-                                    color = tintColor,
-                                    volumeFraction = if (isMuted) 0f else 0.5f,
-                                    pathBuffer = Path(),
-                                    horizontalShiftUnits = if (isMuted) 0.8f else 2.0f,
-                                    wave1Alpha = if (isMuted) 0f else 1f,
-                                    wave1Scale = 1f,
-                                    wave2Alpha = if (isMuted) 0f else 1f,
-                                    wave2Scale = 1f,
-                                    wave3Alpha = 0f,
-                                    wave3Scale = 0.85f
-                                )
-                            } else if (streamIcon == MixerStreamIcon.MEDIA) {
-                                drawCustomBeamedNoteIcon(center = iconCenter, size = iconSize, color = tintColor)
-                            } else {
-                                translate(left = iconCenter.x - iconSize * 0.5f, top = iconCenter.y - iconSize * 0.5f) {
-                                    with(activePainter) {
-                                        draw(size = Size(iconSize, iconSize), colorFilter = ColorFilter.tint(tintColor))
-                                    }
+                            val fittedLabel = android.text.TextUtils.ellipsize(
+                                displayLabel,
+                                android.text.TextPaint(textPaint),
+                                maxLabelW,
+                                android.text.TextUtils.TruncateAt.END
+                            ).toString()
+                            val baseline = labelCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
+                            canvas.nativeCanvas.drawText(fittedLabel, pillW * 0.5f, baseline, textPaint)
+                        }
+                        if (customAppIcon != null) {
+                            val bitmap = customAppIcon.toBitmap(iconSize.toInt().coerceAtLeast(1), iconSize.toInt().coerceAtLeast(1)).asImageBitmap()
+                            drawImage(
+                                image = bitmap,
+                                topLeft = Offset(iconCenter.x - iconSize * 0.5f, iconCenter.y - iconSize * 0.5f)
+                            )
+                        } else if (streamIcon == MixerStreamIcon.RING) {
+                            drawCustomSpeakerIcon(
+                                center = iconCenter,
+                                size = iconSize,
+                                color = tintColor,
+                                volumeFraction = if (isMuted) 0f else 0.5f,
+                                pathBuffer = Path(),
+                                horizontalShiftUnits = if (isMuted) 0.8f else 2.0f,
+                                wave1Alpha = if (isMuted) 0f else 1f,
+                                wave1Scale = 1f,
+                                wave2Alpha = if (isMuted) 0f else 1f,
+                                wave2Scale = 1f,
+                                wave3Alpha = 0f,
+                                wave3Scale = 0.85f
+                            )
+                        } else if (streamIcon == MixerStreamIcon.MEDIA) {
+                            drawCustomBeamedNoteIcon(center = iconCenter, size = iconSize, color = tintColor)
+                        } else {
+                            translate(left = iconCenter.x - iconSize * 0.5f, top = iconCenter.y - iconSize * 0.5f) {
+                                with(activePainter) {
+                                    draw(size = Size(iconSize, iconSize), colorFilter = ColorFilter.tint(tintColor))
                                 }
                             }
                         }
@@ -1335,18 +1734,5 @@ private fun VerticalStreamPill(
                 }
             }
         }
-
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            color = labelColor,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
     }
 }

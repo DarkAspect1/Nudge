@@ -17,6 +17,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -104,6 +106,7 @@ fun ActionsPanelOverlay(
     iconSizeDp: Float = 24f,
     fluidityPercent: Int = 80,
     showLabel: Boolean = true,
+    onDismiss: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val effectiveModes = if (modes.size >= 2) modes else DEFAULT_CUSTOM_MODES
@@ -113,6 +116,8 @@ fun ActionsPanelOverlay(
 
     val coroutineScope = rememberCoroutineScope()
     val wheelScrollPosition = remember { Animatable(initialIndex.toFloat()) }
+    val currentEffectiveModes by rememberUpdatedState(effectiveModes)
+    val currentOnModeSelected by rememberUpdatedState(onModeSelected)
     var isFingerTouchingPanel by remember { mutableStateOf(false) }
     val isPanelBusy = isFingerTouchingPanel || wheelScrollPosition.isRunning
 
@@ -170,6 +175,8 @@ fun ActionsPanelOverlay(
 
     LaunchedEffect(stepFlow) {
         stepFlow?.collect { stepDirection ->
+            val modesNow = currentEffectiveModes
+            if (modesNow.isEmpty()) return@collect
             val nextTarget = (wheelScrollPosition.targetValue.roundToInt() + stepDirection).toFloat()
             wheelScrollPosition.animateTo(
                 targetValue = nextTarget,
@@ -178,8 +185,8 @@ fun ActionsPanelOverlay(
                     stiffness = Spring.StiffnessLow
                 )
             )
-            val actualIdx = Math.floorMod(nextTarget.roundToInt(), effectiveModes.size)
-            onModeSelected(effectiveModes[actualIdx])
+            val actualIdx = Math.floorMod(nextTarget.roundToInt(), modesNow.size)
+            currentOnModeSelected(modesNow[actualIdx])
         }
     }
 
@@ -196,6 +203,11 @@ fun ActionsPanelOverlay(
 
     Box(
         modifier = modifier
+            .pointerInput(Unit) {
+                detectTapGestures {
+                    onDismiss()
+                }
+            }
             .graphicsLayer {
                 when (screenEdge) {
                     ScreenEdge.LEFT -> {
@@ -267,7 +279,9 @@ fun ActionsPanelOverlay(
                                     } finally {
                                         val targetIndex = wheelScrollPosition.value.roundToInt()
                                         val actualIdx = Math.floorMod(targetIndex, effectiveModes.size)
-                                        onModeSelected(effectiveModes[actualIdx])
+                                        if (isVisible && isFingerTouchingPanel) {
+                                            onModeSelected(effectiveModes[actualIdx])
+                                        }
                                         launch {
                                             try {
                                                 wheelScrollPosition.animateTo(
@@ -454,7 +468,9 @@ fun ActionsPanelOverlay(
                                     } finally {
                                         val targetIndex = wheelScrollPosition.value.roundToInt()
                                         val actualIdx = Math.floorMod(targetIndex, effectiveModes.size)
-                                        onModeSelected(effectiveModes[actualIdx])
+                                        if (isVisible && isFingerTouchingPanel) {
+                                            onModeSelected(effectiveModes[actualIdx])
+                                        }
                                         launch {
                                             try {
                                                 wheelScrollPosition.animateTo(

@@ -61,7 +61,9 @@ enum class PreviewTarget {
     HUD,
     DND,
     MODES,
-    MIXER
+    MIXER,
+    NUDGE_MENU,
+    OPEN_APPS_MENU
 }
 
 enum class EdgePopType {
@@ -71,6 +73,11 @@ enum class EdgePopType {
 }
 
 typealias ButtonType = EdgePopType
+
+enum class EdgePopStyle(val displayName: String) {
+    ROUNDED_TOP("Rounded Top"),
+    FLAT_TOP("Flat Top")
+}
 
 enum class HardwareTrigger(val displayName: String) {
     NONE("None"),
@@ -246,9 +253,10 @@ data class NudgeSettings(
     val powerButtonYFraction: Float = 0.50f,
     val powerPopWidthDp: Float = 14f,
     val powerPopHeightDp: Float = 72f,
+    val edgePopStyle: EdgePopStyle = EdgePopStyle.ROUNDED_TOP,
+    val edgePopFlatTopGlowEnabled: Boolean = false,
     val enableVolumeSliderHud: Boolean = true,
     val showSystemPanelWhenHudOff: Boolean = false,
-    val volumeStep: Int = 7,
     val isPerAppVolumeEnabled: Boolean = false,
     val perAppVolumeDisplayMode: String = "ALONGSIDE_SLIDER",
     val updateCheckFrequency: String = "DAILY",
@@ -266,6 +274,9 @@ data class NudgeSettings(
     val hudHeightDp: Float = 155f,
     val hudWidthDp: Float = 45f,
     val hudCornerRadiusDp: Float = 15f,
+    val volumeSliderPillTransparency: Int = 0,
+    val volumeSliderBlur: Float = 0f,
+    val volumeSliderPillBlurDp: Float = 0f,
     val hudAutoHideMs: Long = 1800L,
     val hudTriggerMode: HudTriggerMode = HudTriggerMode.SIMULTANEOUS,
     val enableSliderHudInLandscape: Boolean = true,
@@ -274,11 +285,14 @@ data class NudgeSettings(
     val showSystemPanelInLandscape: Boolean = true,
     val floatingMode: Boolean = false,
     val hudEdgeInsetDp: Float = 0f,
+    val enableThinVolumeHud: Boolean = true,
     val hapticsEnabled: Boolean = true,
     val edgePopHapticsEnabled: Boolean = true,
     val volumeSliderHapticsEnabled: Boolean = true,
+    val soundIconModeSwitchHapticsEnabled: Boolean = true,
     val dndPanelHapticsEnabled: Boolean = true,
     val actionsPanelHapticsEnabled: Boolean = true,
+    val nudgeHapticsEnabled: Boolean = true,
     val lightMode: Boolean = false,
 
     val audioMixerPopupWidthDp: Float = 228f,
@@ -295,6 +309,7 @@ data class NudgeSettings(
 
     val enableDndToggle: Boolean = true,
     val dndModeType: DndModeType = DndModeType.SILENT_RING,
+    val useShizukuForDnd: Boolean = false,
     val dndTrigger: HardwareTrigger = HardwareTrigger.NONE,
     val dndDoubleTapTimeoutMs: Long = 250L,
     val dndTimeoutMs: Long = 1500L,
@@ -328,11 +343,25 @@ data class NudgeSettings(
     val actionsPanelFluidityPercent: Int = 80,
     val showActionsLabel: Boolean = true,
     val customModes: List<CustomMode> = DEFAULT_CUSTOM_MODES,
+    val enablePersistentNudges: Boolean = false,
+    val persistentNudges: List<PersistentNudge> = DEFAULT_PERSISTENT_NUDGES,
+    val nudgeWidthDp: Float = 14f,
+    val nudgeHeightDp: Float = 64f,
+    val nudgeGlowEnabled: Boolean = true,
+    val nudgeMenuWidthDp: Float = 50f,
+    val nudgeMenuHeightDp: Float = 300f,
+    val nudgeMenuXFraction: Float = 0f,
+    val nudgeMenuYFraction: Float = 0.50f,
+    val nudgeMenuEdge: ScreenEdge = ScreenEdge.RIGHT,
     val powerAssistantConfigured: Boolean = false,
+    val enableShizukuPowerHoldFallback: Boolean = false,
+    val nudgeMenuApps: List<NudgeMenuApp> = emptyList(),
 
+    val customButtonSource: String = "ACCESSIBILITY",
     val customButtonKeyCode: Int = 0,
     val customButtonScanCode: Int = 0,
     val customButtonLabel: String = "",
+    val customButtonDeviceName: String = "",
 
     val isHideAccessibilityEnabled: Boolean = false,
     val cloakedPackages: Set<String> = emptySet(),
@@ -345,8 +374,10 @@ data class NudgeSettings(
     val isMasterHapticsEnabled: Boolean get() = hapticsEnabled
     val effectiveEdgePopHaptics: Boolean get() = hapticsEnabled && edgePopHapticsEnabled
     val effectiveVolumeSliderHaptics: Boolean get() = hapticsEnabled && volumeSliderHapticsEnabled
+    val effectiveSoundIconModeSwitchHaptics: Boolean get() = hapticsEnabled && soundIconModeSwitchHapticsEnabled
     val effectiveDndPanelHaptics: Boolean get() = hapticsEnabled && dndPanelHapticsEnabled
     val effectiveActionsPanelHaptics: Boolean get() = hapticsEnabled && actionsPanelHapticsEnabled
+    val effectiveNudgeHaptics: Boolean get() = hapticsEnabled && nudgeHapticsEnabled
     val edgePopTimeoutMs: Long get() = popAutoHideMs
 
     val enableModesCarousel: Boolean get() = enableActionsPanel
@@ -370,6 +401,30 @@ data class NudgeSettings(
     val mixerPositionXPercent: Float get() = audioMixerXPercent
     val mixerPositionYPercent: Float get() = audioMixerYPercent
 
+    val customButtonTrigger: HardwareKeyTrigger?
+        get() {
+            val src = runCatching { TriggerSource.valueOf(customButtonSource) }.getOrDefault(TriggerSource.ACCESSIBILITY)
+            return if (src == TriggerSource.ACCESSIBILITY) {
+                if (customButtonKeyCode == 0 && customButtonScanCode == 0) null
+                else HardwareKeyTrigger(
+                    source = TriggerSource.ACCESSIBILITY,
+                    androidKeyCode = customButtonKeyCode.takeIf { it != 0 },
+                    scanCode = customButtonScanCode.takeIf { it != 0 },
+                    linuxKeyName = customButtonLabel.takeIf { it.isNotBlank() },
+                    deviceName = customButtonDeviceName.takeIf { it.isNotBlank() }
+                )
+            } else {
+                if (customButtonScanCode == 0) null
+                else HardwareKeyTrigger(
+                    source = TriggerSource.SHIZUKU_GETEVENT,
+                    androidKeyCode = null,
+                    scanCode = customButtonScanCode,
+                    linuxKeyName = customButtonLabel.takeIf { it.isNotBlank() },
+                    deviceName = customButtonDeviceName.takeIf { it.isNotBlank() }
+                )
+            }
+        }
+
     companion object {
         const val MIN_POP_WIDTH_DP = 4f
         const val MAX_POP_WIDTH_DP = 40f
@@ -378,8 +433,6 @@ data class NudgeSettings(
         const val MIN_POP_AUTO_HIDE_MS = 100L
         const val MAX_POP_AUTO_HIDE_MS = 1500L
         const val POP_AUTO_HIDE_STEP_MS = 50L
-        const val MIN_VOLUME_STEP = 1
-        const val MAX_VOLUME_STEP = 10
         const val MIN_HUD_HEIGHT_DP = 100f
         const val MAX_HUD_HEIGHT_DP = 260f
         const val MIN_HUD_WIDTH_DP = 28f
@@ -499,9 +552,6 @@ data class NudgeSettings(
 
         fun clampPopAutoHideMs(value: Long): Long =
             value.coerceIn(MIN_POP_AUTO_HIDE_MS, MAX_POP_AUTO_HIDE_MS)
-
-        fun clampVolumeStep(value: Int): Int =
-            value.coerceIn(MIN_VOLUME_STEP, MAX_VOLUME_STEP)
 
         fun clampHudHeight(value: Float): Float =
             value.coerceIn(MIN_HUD_HEIGHT_DP, MAX_HUD_HEIGHT_DP)

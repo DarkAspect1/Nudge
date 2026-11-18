@@ -4,23 +4,43 @@ import android.Manifest
 import android.app.NotificationManager
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
+import android.service.voice.VoiceInteractionService
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
+import android.view.HapticFeedbackConstants
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,15 +63,18 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.Launch
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
@@ -65,6 +88,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -77,6 +101,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -89,12 +114,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -102,12 +131,20 @@ import com.nudge.edge.data.SettingsRepository
 import com.nudge.edge.model.BezelEdge
 import com.nudge.edge.model.CustomMode
 import com.nudge.edge.model.DndModeType
+import com.nudge.edge.model.HardwareKeyTrigger
 import com.nudge.edge.model.HardwareTrigger
 import com.nudge.edge.model.LivePreviewController
 import com.nudge.edge.model.NudgeIcons
+import com.nudge.edge.model.NudgeMenuApp
 import com.nudge.edge.model.NudgeSettings
+import com.nudge.edge.model.PersistentNudge
+import com.nudge.edge.model.PersistentNudgeAction
+import com.nudge.edge.model.ScreenEdge
+import com.nudge.edge.model.TriggerSource
 import com.nudge.edge.service.NudgeAccessibilityService
+import com.nudge.edge.service.NudgeVoiceInteractionService
 import com.nudge.edge.service.ShizukuManager
+import com.nudge.edge.service.ShizukuStatus
 import com.nudge.edge.model.PreviewTarget
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -116,6 +153,13 @@ import kotlin.math.roundToInt
 
 @Composable
 fun ModesTab(
+    settings: NudgeSettings,
+    repository: SettingsRepository,
+    modifier: Modifier = Modifier
+) = ActionsTab(settings, repository, modifier)
+
+@Composable
+fun ActionsTab(
     settings: NudgeSettings,
     repository: SettingsRepository,
     modifier: Modifier = Modifier
@@ -143,6 +187,11 @@ fun ModesTab(
             onDeleteMode = { repository.deleteCustomMode(it.id) },
             onMoveUp = { index -> repository.reorderCustomMode(index, index - 1) },
             onMoveDown = { index -> repository.reorderCustomMode(index, index + 1) }
+        )
+
+        PersistentNudgesCard(
+            settings = settings,
+            repository = repository
         )
     }
 
@@ -199,8 +248,13 @@ private fun ModesPermissionsHeader(
     }
 
     var isAssistantConfigured by remember(context, settings.powerAssistantConfigured) {
-        val assistantSetting = Settings.Secure.getString(context.contentResolver, "assistant")
-        mutableStateOf(assistantSetting?.contains(context.packageName) == true || settings.powerAssistantConfigured)
+        val isActive = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            VoiceInteractionService.isActiveService(
+                context,
+                ComponentName(context, NudgeVoiceInteractionService::class.java)
+            )
+        } else false
+        mutableStateOf(isActive || settings.powerAssistantConfigured)
     }
 
     val postNotifLauncher = rememberLauncherForActivityResult(
@@ -221,9 +275,13 @@ private fun ModesPermissionsHeader(
                 Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
         } else true
-        val assistantSetting = Settings.Secure.getString(context.contentResolver, "assistant") ?: ""
-        val voiceServiceSetting = Settings.Secure.getString(context.contentResolver, "voice_interaction_service") ?: ""
-        isAssistantConfigured = assistantSetting.contains(context.packageName) || voiceServiceSetting.contains(context.packageName)
+        val isActive = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            VoiceInteractionService.isActiveService(
+                context,
+                ComponentName(context, NudgeVoiceInteractionService::class.java)
+            )
+        } else false
+        isAssistantConfigured = isActive || settings.powerAssistantConfigured
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -256,6 +314,7 @@ private fun ModesPermissionsHeader(
             )
         }
 
+        val shizukuStatusForDnd by ShizukuManager.status.collectAsState()
         PermissionItemCard(
             title = "Do Not Disturb Access",
             isGranted = hasDndPermission,
@@ -277,6 +336,56 @@ private fun ModesPermissionsHeader(
                             delay(100L)
                         }
                     }
+                }
+            },
+            extraContent = {
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(
+                            text = "Use Shizuku for DND",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "When off, uses standard Android DND access; when on, toggles real system DND through Shizuku (recommended on Android 15+ and to avoid separate DND access permission).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = settings.useShizukuForDnd,
+                        onCheckedChange = { checked ->
+                            if (checked && shizukuStatusForDnd != ShizukuStatus.CONNECTED_AND_ACTIVE) {
+                                if (shizukuStatusForDnd == ShizukuStatus.PERMISSION_REQUIRED) {
+                                    ShizukuManager.requestPermission()
+                                } else {
+                                    Toast.makeText(
+                                        context,
+                                        "Shizuku is not running or authorized. Please start Shizuku first.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                            repository.setUseShizukuForDnd(checked)
+                        }
+                    )
+                }
+                if (settings.useShizukuForDnd && shizukuStatusForDnd != ShizukuStatus.CONNECTED_AND_ACTIVE) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Warning: Shizuku status is \"${shizukuStatusForDnd.displayName}\". Shizuku must be running and authorized to toggle DND.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
         )
@@ -343,8 +452,43 @@ private fun ModesPermissionsHeader(
                         }
                     }
                 }
+            },
+            extraContent = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text(
+                            text = "Use Shizuku for hold power button",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Captures long-press power via Shizuku if you prefer keeping Google Assistant or Gemini as your default digital assistant.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = settings.enableShizukuPowerHoldFallback,
+                        onCheckedChange = {
+                            repository.setEnableShizukuPowerHoldFallback(it)
+                            if (it && ShizukuManager.hasShizukuPermission()) {
+                                ShizukuManager.startInputEventMonitoring()
+                            }
+                        }
+                    )
+                }
             }
         )
+
+
     }
 }
 
@@ -357,7 +501,8 @@ private fun PermissionItemCard(
     description: String,
     buttonText: String,
     onClick: () -> Unit,
-    onAutoGrantClick: (() -> Unit)? = null
+    onAutoGrantClick: (() -> Unit)? = null,
+    extraContent: (@Composable () -> Unit)? = null
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -443,6 +588,10 @@ private fun PermissionItemCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
+
+            if (extraContent != null) {
+                extraContent()
             }
         }
     }
@@ -908,8 +1057,8 @@ private fun DndPanelCard(
         CustomButtonScannerDialog(
             currentButtonLabel = settings.customButtonLabel,
             onDismiss = { isScanningCustomButton = false },
-            onButtonDetected = { keyCode, scanCode, label ->
-                repository.setCustomHardwareButton(keyCode, scanCode, label)
+            onButtonDetected = { trigger ->
+                repository.setCustomHardwareButton(trigger)
                 isScanningCustomButton = false
             }
         )
@@ -1331,8 +1480,8 @@ private fun ActionsPanelCard(
         CustomButtonScannerDialog(
             currentButtonLabel = settings.customButtonLabel,
             onDismiss = { isScanningCustomButton = false },
-            onButtonDetected = { keyCode, scanCode, label ->
-                repository.setCustomHardwareButton(keyCode, scanCode, label)
+            onButtonDetected = { trigger ->
+                repository.setCustomHardwareButton(trigger)
                 isScanningCustomButton = false
             }
         )
@@ -1422,7 +1571,7 @@ private fun HowToUseActionsCard() {
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "• Samsung Modes & Routines: Emits a silent notification with the mode keyword that your Samsung routine can detect as an 'If' condition.\n• Tasker, MacroDroid, Automate: Receives broadcast 'com.nudge.edge.MODE_CHANGED' with extras 'mode', 'mode_id', and 'mode_name'.\n• Custom profiles: Switch presets for Work, Sleep, Gym, Gaming, or Driving.",
+                            text = "• Modes & Routines: Emits a silent notification with the mode keyword that your routine can detect as an 'If' condition.\n• Tasker, MacroDroid, Automate: Receives broadcast 'com.nudge.edge.MODE_CHANGED' with extras 'mode', 'mode_id', and 'mode_name'.\n• Custom profiles: Switch presets for Work, Sleep, Gym, Gaming, or Driving.",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -1435,7 +1584,7 @@ private fun HowToUseActionsCard() {
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "1. Choose your preferred Hardware Trigger Button below.\n2. Add or reorder modes in the Modes Manager.\n3. In Samsung Modes & Routines or Tasker, create a routine that listens for the notification keyword (tap any keyword below the modes in modes manager to copy it).",
+                            text = "1. Choose your preferred Hardware Trigger Button below.\n2. Add or reorder modes in the Modes Manager.\n3. In Modes & Routines or Tasker, create a routine that listens for the notification keyword (tap any keyword below the modes in modes manager to copy it).\n4. Broadcast Step Example: In Tasker/MacroDroid, add an Intent Received event for 'com.nudge.edge.MODE_CHANGED', or test via shell command: am broadcast -a com.nudge.edge.MODE_CHANGED --es mode \"sleep\".",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -1457,15 +1606,16 @@ private fun HowToUseActionsCard() {
 private fun CustomButtonScannerDialog(
     currentButtonLabel: String? = null,
     onDismiss: () -> Unit,
-    onButtonDetected: (keyCode: Int, scanCode: Int, label: String) -> Unit
+    onButtonDetected: (HardwareKeyTrigger) -> Unit
 ) {
     var secondsLeft by remember { mutableStateOf(10) }
-    var detectedButton by remember { mutableStateOf<Triple<Int, Int, String>?>(null) }
+    var detectedTrigger by remember { mutableStateOf<HardwareKeyTrigger?>(null) }
+    val shizukuState by ShizukuManager.status.collectAsState()
 
     DisposableEffect(Unit) {
         NudgeAccessibilityService.isScanningCustomButton = true
-        NudgeAccessibilityService.onCustomButtonScanned = { keyCode, scanCode, label ->
-            detectedButton = Triple(keyCode, scanCode, label)
+        NudgeAccessibilityService.onCustomButtonScanned = { trigger ->
+            detectedTrigger = trigger
         }
         onDispose {
             NudgeAccessibilityService.isScanningCustomButton = false
@@ -1474,11 +1624,11 @@ private fun CustomButtonScannerDialog(
     }
 
     LaunchedEffect(Unit) {
-        while (secondsLeft > 0 && detectedButton == null) {
+        while (secondsLeft > 0 && detectedTrigger == null) {
             kotlinx.coroutines.delay(1000L)
             secondsLeft -= 1
         }
-        if (detectedButton == null) {
+        if (detectedTrigger == null) {
             onDismiss()
         }
     }
@@ -1502,9 +1652,9 @@ private fun CustomButtonScannerDialog(
                     )
                 }
 
-                if (detectedButton == null) {
+                if (detectedTrigger == null) {
                     Text(
-                        text = "Press any additional physical button on your device now (e.g. Bixby, XCover, Action Button, Assistant, or Mute Switch)...",
+                        text = "Press any additional physical button on your device now (e.g. Motorola Action/Side key, Bixby, XCover, Action Button, Assistant, or Mute Switch)...",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
@@ -1513,24 +1663,60 @@ private fun CustomButtonScannerDialog(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
+                    if (shizukuState != ShizukuStatus.CONNECTED_AND_ACTIVE) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Tip: OEM-exclusive keys (like Motorola AI/Side key or Bixby) require Shizuku to be active so they can be captured via getevent.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
                 } else {
-                    val (kCode, sCode, label) = detectedButton!!
+                    val trigger = detectedTrigger!!
+                    val label = trigger.linuxKeyName ?: "Key"
+                    val sourceLabel = if (trigger.source == TriggerSource.ACCESSIBILITY) {
+                        "Accessibility (Standard)"
+                    } else {
+                        "Shizuku getevent (Hardware evdev)"
+                    }
                     Text(
                         text = "Button Detected!",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Text("Button: $label\nKeyCode: $kCode\nScanCode: $sCode")
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Button: $label", fontWeight = FontWeight.SemiBold)
+                        Text("Source: $sourceLabel", style = MaterialTheme.typography.bodySmall)
+                        if (!trigger.deviceName.isNullOrBlank()) {
+                            Text("Device: ${trigger.deviceName}", style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (trigger.source == TriggerSource.ACCESSIBILITY) {
+                            Text(
+                                "KeyCode: ${trigger.androidKeyCode ?: 0} | ScanCode: ${trigger.scanCode ?: 0}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        } else {
+                            Text(
+                                "ScanCode: ${trigger.scanCode ?: 0} (0x${trigger.scanCode?.toString(16)?.uppercase()})",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
                 }
             }
         },
         confirmButton = {
-            if (detectedButton != null) {
+            if (detectedTrigger != null) {
                 Button(
                     onClick = {
-                        val (kCode, sCode, label) = detectedButton!!
-                        onButtonDetected(kCode, sCode, label)
+                        onButtonDetected(detectedTrigger!!)
                     },
                     shape = CircleShape
                 ) {
@@ -1543,7 +1729,7 @@ private fun CustomButtonScannerDialog(
             }
         },
         dismissButton = {
-            if (detectedButton != null) {
+            if (detectedTrigger != null) {
                 TextButton(onClick = onDismiss) {
                     Text("Discard")
                 }
@@ -2122,4 +2308,1069 @@ private fun SliderRow(
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PersistentNudgesCard(
+    settings: NudgeSettings,
+    repository: SettingsRepository
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text(
+                        text = "Nudge",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Persistent flat-top edge triggers. Swiping from a nudge runs a selected action.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = settings.enablePersistentNudges,
+                    onCheckedChange = repository::setEnablePersistentNudges
+                )
+            }
+
+            AnimatedVisibility(
+                visible = settings.enablePersistentNudges,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    SliderRow(
+                        title = "Nudge Width",
+                        valueLabel = "${settings.nudgeWidthDp.roundToInt()} dp",
+                        value = settings.nudgeWidthDp,
+                        valueRange = 4f..30f,
+                        onValueChange = repository::setNudgeWidthDp,
+                        onStepDown = { repository.setNudgeWidthDp(settings.nudgeWidthDp - 1f) },
+                        onStepUp = { repository.setNudgeWidthDp(settings.nudgeWidthDp + 1f) }
+                    )
+
+                    SliderRow(
+                        title = "Nudge Height",
+                        valueLabel = "${settings.nudgeHeightDp.roundToInt()} dp",
+                        value = settings.nudgeHeightDp,
+                        valueRange = 40f..140f,
+                        onValueChange = repository::setNudgeHeightDp,
+                        onStepDown = { repository.setNudgeHeightDp(settings.nudgeHeightDp - 4f) },
+                        onStepUp = { repository.setNudgeHeightDp(settings.nudgeHeightDp + 4f) }
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text(
+                                text = "Nudge Glow",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Display luminous edge glow on all nudge handles",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = settings.nudgeGlowEnabled,
+                            onCheckedChange = repository::setNudgeGlowEnabled
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    settings.persistentNudges.forEachIndexed { index, nudge ->
+                        NudgeConfigItemCard(
+                            index = index,
+                            nudge = nudge,
+                            settings = settings,
+                            repository = repository,
+                            canDelete = settings.persistentNudges.size > 1,
+                            onUpdate = { updated -> repository.updatePersistentNudge(updated) },
+                            onDelete = { repository.deletePersistentNudge(nudge.id) }
+                        )
+                    }
+
+                    if (settings.persistentNudges.size < 10) {
+                        OutlinedButton(
+                            onClick = {
+                                val newId = "nudge_${System.currentTimeMillis()}"
+                                val newNudge = PersistentNudge(
+                                    id = newId,
+                                    enabled = true,
+                                    edge = if (settings.persistentNudges.size % 2 == 1) ScreenEdge.LEFT else ScreenEdge.RIGHT,
+                                    yFraction = (0.25f + (settings.persistentNudges.size * 0.20f)).coerceIn(0.1f, 0.9f),
+                                    displayOnLandscape = false,
+                                    action = PersistentNudgeAction.VOLUME_SLIDER_HUD
+                                )
+                                repository.addPersistentNudge(newNudge)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Add Nudge (${settings.persistentNudges.size}/10)", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NudgeConfigItemCard(
+    index: Int,
+    nudge: PersistentNudge,
+    settings: NudgeSettings,
+    repository: SettingsRepository,
+    canDelete: Boolean,
+    onUpdate: (PersistentNudge) -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = "Nudge ${index + 1}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "• ${nudge.action.displayName}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (canDelete) {
+                        IconButton(onClick = onDelete) {
+                            Icon(
+                                imageVector = Icons.Rounded.Delete,
+                                contentDescription = "Delete Nudge",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = nudge.enabled,
+                        onCheckedChange = { onUpdate(nudge.copy(enabled = it)) }
+                    )
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "Placement Edge",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(ScreenEdge.LEFT to "Left", ScreenEdge.RIGHT to "Right").forEach { (edge, label) ->
+                        val selected = nudge.edge == edge
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onUpdate(nudge.copy(edge = edge)) },
+                            shape = CircleShape,
+                            color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow
+                        ) {
+                            Text(
+                                text = label,
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            }
+
+            SliderRow(
+                title = "Y Axis Position",
+                valueLabel = "${(nudge.yFraction * 100f).roundToInt()}%",
+                value = nudge.yFraction * 100f,
+                valueRange = 5f..95f,
+                onValueChange = { onUpdate(nudge.copy(yFraction = (it / 100f).coerceIn(0.05f, 0.95f))) },
+                onStepDown = { onUpdate(nudge.copy(yFraction = (nudge.yFraction - 0.05f).coerceIn(0.05f, 0.95f))) },
+                onStepUp = { onUpdate(nudge.copy(yFraction = (nudge.yFraction + 0.05f).coerceIn(0.05f, 0.95f))) }
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(
+                        text = "Display on Landscape",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Show this nudge handle when device is rotated to landscape",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = nudge.displayOnLandscape,
+                    onCheckedChange = { onUpdate(nudge.copy(displayOnLandscape = it)) }
+                )
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "Swiping Action",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                var actionExpanded by remember { mutableStateOf(false) }
+
+                ExposedDropdownMenuBox(
+                    expanded = actionExpanded,
+                    onExpandedChange = { actionExpanded = it }
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor()
+                            .clickable { actionExpanded = true }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = nudge.action.displayName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                if (nudge.action == PersistentNudgeAction.NUDGE_MENU || nudge.action == PersistentNudgeAction.OPEN_APP) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.primary
+                                    ) {
+                                        Text(
+                                            text = "FEATURED",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Icon(
+                                imageVector = if (actionExpanded) Icons.Rounded.ArrowUpward else Icons.Rounded.ArrowDownward,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    val actionsList = remember {
+                        listOf(
+                            PersistentNudgeAction.NUDGE_MENU,
+                            PersistentNudgeAction.OPEN_APP,
+                            PersistentNudgeAction.APP_SWITCH,
+                            PersistentNudgeAction.OPEN_CAMERA,
+                            PersistentNudgeAction.VOICE_ASSISTANT,
+                            PersistentNudgeAction.VOLUME_SLIDER_HUD,
+                            PersistentNudgeAction.AUDIO_MIXER,
+                            PersistentNudgeAction.SHOW_SYSTEM_VOLUME,
+                            PersistentNudgeAction.VOLUME_UP,
+                            PersistentNudgeAction.VOLUME_DOWN,
+                            PersistentNudgeAction.MEDIA_PLAY_PAUSE,
+                            PersistentNudgeAction.MEDIA_NEXT,
+                            PersistentNudgeAction.MEDIA_PREVIOUS,
+                            PersistentNudgeAction.ACTIONS_PANEL,
+                            PersistentNudgeAction.DND_PANEL,
+                            PersistentNudgeAction.TOGGLE_DND,
+                            PersistentNudgeAction.TOGGLE_SILENT_RING,
+                            PersistentNudgeAction.NOTIFICATIONS,
+                            PersistentNudgeAction.QUICK_PANEL,
+                            PersistentNudgeAction.TAKE_SCREENSHOT,
+                            PersistentNudgeAction.TOGGLE_FLASHLIGHT,
+                            PersistentNudgeAction.TOGGLE_AUTO_ROTATE,
+                            PersistentNudgeAction.BACK,
+                            PersistentNudgeAction.HOME,
+                            PersistentNudgeAction.RECENTS,
+                            PersistentNudgeAction.LOCK_SCREEN,
+                            PersistentNudgeAction.POWER_MENU
+                        )
+                    }
+
+                    ExposedDropdownMenu(
+                        expanded = actionExpanded,
+                        onDismissRequest = { actionExpanded = false },
+                        shape = RoundedCornerShape(24.dp),
+                        modifier = Modifier.clip(RoundedCornerShape(24.dp))
+                    ) {
+                        actionsList.forEach { action ->
+                            val isSelected = nudge.action == action
+                            val isFeatured = action == PersistentNudgeAction.NUDGE_MENU || action == PersistentNudgeAction.OPEN_APP
+                            DropdownMenuItem(
+                                leadingIcon = null,
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = action.displayName,
+                                            fontWeight = if (isSelected || isFeatured) FontWeight.Bold else FontWeight.Normal,
+                                            color = when {
+                                                isFeatured -> Color.White
+                                                isSelected -> MaterialTheme.colorScheme.primary
+                                                else -> MaterialTheme.colorScheme.onSurface
+                                            },
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (isFeatured) {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = MaterialTheme.colorScheme.primary
+                                            ) {
+                                                Text(
+                                                    text = "FEATURED",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onPrimary,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    onUpdate(nudge.copy(action = action))
+                                    actionExpanded = false
+                                }
+                            )
+                            if (action == PersistentNudgeAction.OPEN_APP) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = nudge.action == PersistentNudgeAction.NUDGE_MENU,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        Text(
+                            text = "Nudge Menu Sizing & Position",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        SliderRow(
+                            title = "Menu Width",
+                            valueLabel = "${settings.nudgeMenuWidthDp.roundToInt()} dp",
+                            value = settings.nudgeMenuWidthDp,
+                            valueRange = 20f..100f,
+                            onValueChange = { v ->
+                                repository.setNudgeMenuWidthDp(v)
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.NUDGE_MENU) { s ->
+                                    s.copy(overrideWidthDp = v)
+                                }
+                                repository.requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 1500L)
+                            },
+                            onStepDown = {
+                                val v = settings.nudgeMenuWidthDp - 1f
+                                repository.setNudgeMenuWidthDp(v)
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.NUDGE_MENU) { s ->
+                                    s.copy(overrideWidthDp = v)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 1500L)
+                            },
+                            onStepUp = {
+                                val v = settings.nudgeMenuWidthDp + 1f
+                                repository.setNudgeMenuWidthDp(v)
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.NUDGE_MENU) { s ->
+                                    s.copy(overrideWidthDp = v)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 1500L)
+                            },
+                            onValueChangeFinished = {
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 800L)
+                            }
+                        )
+
+                        SliderRow(
+                            title = "Menu Height",
+                            valueLabel = "${settings.nudgeMenuHeightDp.roundToInt()} dp",
+                            value = settings.nudgeMenuHeightDp,
+                            valueRange = 180f..500f,
+                            onValueChange = { v ->
+                                repository.setNudgeMenuHeightDp(v)
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.NUDGE_MENU) { s ->
+                                    s.copy(overrideHeightDp = v)
+                                }
+                                repository.requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 1500L)
+                            },
+                            onStepDown = {
+                                val v = settings.nudgeMenuHeightDp - 10f
+                                repository.setNudgeMenuHeightDp(v)
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.NUDGE_MENU) { s ->
+                                    s.copy(overrideHeightDp = v)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 1500L)
+                            },
+                            onStepUp = {
+                                val v = settings.nudgeMenuHeightDp + 10f
+                                repository.setNudgeMenuHeightDp(v)
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.NUDGE_MENU) { s ->
+                                    s.copy(overrideHeightDp = v)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 1500L)
+                            },
+                            onValueChangeFinished = {
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 800L)
+                            }
+                        )
+
+                        SliderRow(
+                            title = "Y Axis Position",
+                            valueLabel = "${(settings.nudgeMenuYFraction * 100).roundToInt()} %",
+                            value = settings.nudgeMenuYFraction,
+                            valueRange = 0.10f..0.90f,
+                            onValueChange = { v ->
+                                repository.setNudgeMenuYFraction(v)
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.NUDGE_MENU) { s ->
+                                    s.copy(overrideOffsetPercent = v * 100f)
+                                }
+                                repository.requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 1500L)
+                            },
+                            onStepDown = {
+                                val v = settings.nudgeMenuYFraction - 0.02f
+                                repository.setNudgeMenuYFraction(v)
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.NUDGE_MENU) { s ->
+                                    s.copy(overrideOffsetPercent = v * 100f)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 1500L)
+                            },
+                            onStepUp = {
+                                val v = settings.nudgeMenuYFraction + 0.02f
+                                repository.setNudgeMenuYFraction(v)
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.NUDGE_MENU) { s ->
+                                    s.copy(overrideOffsetPercent = v * 100f)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 1500L)
+                            },
+                            onValueChangeFinished = {
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.NUDGE_MENU, durationMs = 800L)
+                            }
+                        )
+
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = nudge.action == PersistentNudgeAction.OPEN_APP,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    var showManageAppsDialog by remember { mutableStateOf(false) }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Selected Apps",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primaryContainer
+                                ) {
+                                    Text(
+                                        text = "${nudge.selectedApps.size}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            Button(
+                                onClick = { showManageAppsDialog = true },
+                                shape = CircleShape
+                            ) {
+                                Text("Manage")
+                            }
+                        }
+
+                        if (showManageAppsDialog) {
+                            ManageNudgeAppsDialog(
+                                initialSelectedApps = nudge.selectedApps,
+                                onAppsUpdated = { updatedList ->
+                                    onUpdate(
+                                        nudge.copy(
+                                            selectedApps = updatedList,
+                                            targetPackage = updatedList.firstOrNull()?.packageName ?: "",
+                                            targetAppName = updatedList.firstOrNull()?.appName ?: ""
+                                        )
+                                    )
+                                },
+                                onDismiss = { showManageAppsDialog = false }
+                            )
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        Text(
+                            text = "Open Apps Menu Sizing & Position",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        SliderRow(
+                            title = "Menu Width",
+                            valueLabel = "${nudge.menuWidthDp.roundToInt()} dp",
+                            value = nudge.menuWidthDp,
+                            valueRange = 20f..100f,
+                            onValueChange = { v ->
+                                onUpdate(nudge.copy(menuWidthDp = v))
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.OPEN_APPS_MENU) { s ->
+                                    s.copy(overrideWidthDp = v, overrideHeightDp = nudge.menuHeightDp, overrideOffsetPercent = nudge.menuYFraction * 100f)
+                                }
+                                repository.requestLivePreview(PreviewTarget.OPEN_APPS_MENU, durationMs = 1500L)
+                            },
+                            onStepDown = {
+                                val v = nudge.menuWidthDp - 1f
+                                onUpdate(nudge.copy(menuWidthDp = v))
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.OPEN_APPS_MENU) { s ->
+                                    s.copy(overrideWidthDp = v, overrideHeightDp = nudge.menuHeightDp, overrideOffsetPercent = nudge.menuYFraction * 100f)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.OPEN_APPS_MENU, durationMs = 1500L)
+                            },
+                            onStepUp = {
+                                val v = nudge.menuWidthDp + 1f
+                                onUpdate(nudge.copy(menuWidthDp = v))
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.OPEN_APPS_MENU) { s ->
+                                    s.copy(overrideWidthDp = v, overrideHeightDp = nudge.menuHeightDp, overrideOffsetPercent = nudge.menuYFraction * 100f)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.OPEN_APPS_MENU, durationMs = 1500L)
+                            },
+                            onValueChangeFinished = {
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.OPEN_APPS_MENU, durationMs = 800L)
+                            }
+                        )
+
+                        SliderRow(
+                            title = "Menu Height",
+                            valueLabel = "${nudge.menuHeightDp.roundToInt()} dp",
+                            value = nudge.menuHeightDp,
+                            valueRange = 180f..500f,
+                            onValueChange = { v ->
+                                onUpdate(nudge.copy(menuHeightDp = v))
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.OPEN_APPS_MENU) { s ->
+                                    s.copy(overrideWidthDp = nudge.menuWidthDp, overrideHeightDp = v, overrideOffsetPercent = nudge.menuYFraction * 100f)
+                                }
+                                repository.requestLivePreview(PreviewTarget.OPEN_APPS_MENU, durationMs = 1500L)
+                            },
+                            onStepDown = {
+                                val v = nudge.menuHeightDp - 10f
+                                onUpdate(nudge.copy(menuHeightDp = v))
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.OPEN_APPS_MENU) { s ->
+                                    s.copy(overrideWidthDp = nudge.menuWidthDp, overrideHeightDp = v, overrideOffsetPercent = nudge.menuYFraction * 100f)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.OPEN_APPS_MENU, durationMs = 1500L)
+                            },
+                            onStepUp = {
+                                val v = nudge.menuHeightDp + 10f
+                                onUpdate(nudge.copy(menuHeightDp = v))
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.OPEN_APPS_MENU) { s ->
+                                    s.copy(overrideWidthDp = nudge.menuWidthDp, overrideHeightDp = v, overrideOffsetPercent = nudge.menuYFraction * 100f)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.OPEN_APPS_MENU, durationMs = 1500L)
+                            },
+                            onValueChangeFinished = {
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.OPEN_APPS_MENU, durationMs = 800L)
+                            }
+                        )
+
+                        SliderRow(
+                            title = "Y Axis Position",
+                            valueLabel = "${(nudge.menuYFraction * 100).roundToInt()} %",
+                            value = nudge.menuYFraction,
+                            valueRange = 0.10f..0.90f,
+                            onValueChange = { v ->
+                                onUpdate(nudge.copy(menuYFraction = v))
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.OPEN_APPS_MENU) { s ->
+                                    s.copy(overrideWidthDp = nudge.menuWidthDp, overrideHeightDp = nudge.menuHeightDp, overrideOffsetPercent = v * 100f)
+                                }
+                                repository.requestLivePreview(PreviewTarget.OPEN_APPS_MENU, durationMs = 1500L)
+                            },
+                            onStepDown = {
+                                val v = nudge.menuYFraction - 0.02f
+                                onUpdate(nudge.copy(menuYFraction = v))
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.OPEN_APPS_MENU) { s ->
+                                    s.copy(overrideWidthDp = nudge.menuWidthDp, overrideHeightDp = nudge.menuHeightDp, overrideOffsetPercent = v * 100f)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.OPEN_APPS_MENU, durationMs = 1500L)
+                            },
+                            onStepUp = {
+                                val v = nudge.menuYFraction + 0.02f
+                                onUpdate(nudge.copy(menuYFraction = v))
+                                repository.setNudgeMenuEdge(nudge.edge)
+                                LivePreviewController.onSliderDrag(PreviewTarget.OPEN_APPS_MENU) { s ->
+                                    s.copy(overrideWidthDp = nudge.menuWidthDp, overrideHeightDp = nudge.menuHeightDp, overrideOffsetPercent = v * 100f)
+                                }
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.OPEN_APPS_MENU, durationMs = 1500L)
+                            },
+                            onValueChangeFinished = {
+                                LivePreviewController.onSliderRelease(800L)
+                                repository.requestLivePreview(PreviewTarget.OPEN_APPS_MENU, durationMs = 800L)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ManageNudgeAppsDialog(
+    initialSelectedApps: List<NudgeMenuApp>,
+    onAppsUpdated: (List<NudgeMenuApp>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    LaunchedEffect(Unit) {
+        InstalledAppsManager.preload(context.applicationContext)
+    }
+    val installedApps by InstalledAppsManager.apps.collectAsState()
+    var searchQuery by remember { mutableStateOf("") }
+    val currentSelected = remember {
+        mutableStateListOf<NudgeMenuApp>().apply { addAll(initialSelectedApps) }
+    }
+    val selectedPackages = remember(currentSelected) {
+        derivedStateOf { currentSelected.map { it.packageName }.toSet() }
+    }
+    var draggingPkg by remember { mutableStateOf<String?>(null) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    val itemStepPx = with(LocalDensity.current) { (58.dp + 6.dp).toPx() }
+    val swapThreshold = itemStepPx * 0.45f
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(Unit) {
+        listState.scrollToItem(0)
+    }
+
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isBlank()) {
+            listState.scrollToItem(0)
+        }
+    }
+
+    val displayApps = remember(installedApps, currentSelected.toList(), searchQuery) {
+        val query = searchQuery.trim().lowercase()
+        if (query.isNotBlank()) {
+            installedApps.filter {
+                it.label.lowercase().contains(query) || it.packageName.lowercase().contains(query)
+            }
+        } else {
+            val selectedAppItems = currentSelected.map { sel ->
+                installedApps.firstOrNull { it.packageName == sel.packageName }
+                    ?: InstalledAppItem(sel.packageName, sel.appName, null)
+            }
+            val unselectedItems = installedApps.filter { inst ->
+                currentSelected.none { it.packageName == inst.packageName }
+            }
+            selectedAppItems + unselectedItems
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = {
+            onAppsUpdated(currentSelected.toList())
+            onDismiss()
+        },
+        title = { Text("Manage Apps", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search installed apps...") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = "Search",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    },
+                    singleLine = true,
+                    shape = CircleShape,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text(
+                    text = "Hold and drag the circle to reorder",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    modifier = Modifier.padding(start = 6.dp)
+                )
+
+                if (installedApps.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                    }
+                } else {
+                    val density = LocalDensity.current
+                    val circleZoneWidthPx = with(density) { 64.dp.toPx() }
+                    LazyColumn(
+                        state = listState,
+                        userScrollEnabled = draggingPkg == null,
+                        contentPadding = PaddingValues(top = 4.dp, bottom = 8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clipToBounds()
+                            .weight(1f, fill = false)
+                            .pointerInput(searchQuery, currentSelected.size) {
+                                if (searchQuery.isNotBlank() || currentSelected.size <= 1) return@pointerInput
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { offset ->
+                                        val listWidth = size.width
+                                        val inZone = offset.x >= listWidth - circleZoneWidthPx
+                                        val hitItem = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+                                            item.key != "reorder_top_anchor" && offset.y >= item.offset && offset.y <= item.offset + item.size
+                                        }
+                                        val pkg = hitItem?.key as? String
+                                        if (inZone && pkg != null && selectedPackages.value.contains(pkg)) {
+                                            draggingPkg = pkg
+                                            dragOffsetY = 0f
+                                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                        } else {
+                                            draggingPkg = null
+                                        }
+                                    },
+                                    onDrag = { change, dragAmount ->
+                                        val dragged = draggingPkg ?: return@detectDragGesturesAfterLongPress
+                                        change.consume()
+                                        var curIdx = currentSelected.indexOfFirst { it.packageName == dragged }
+                                        if (curIdx != -1) {
+                                            dragOffsetY += dragAmount.y
+                                            val currentInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == dragged }
+                                            val itemHeight = currentInfo?.size?.toFloat() ?: itemStepPx
+                                            val downThreshold = itemHeight * 0.55f
+                                            val upThreshold = -itemHeight * 0.45f
+
+                                            while (dragOffsetY > downThreshold && curIdx < currentSelected.lastIndex) {
+                                                val nextIdx = curIdx + 1
+                                                val temp = currentSelected[curIdx]
+                                                currentSelected[curIdx] = currentSelected[nextIdx]
+                                                currentSelected[nextIdx] = temp
+                                                dragOffsetY -= itemHeight
+                                                curIdx = nextIdx
+                                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                            }
+                                            while (dragOffsetY < upThreshold && curIdx > 0) {
+                                                val prevIdx = curIdx - 1
+                                                val temp = currentSelected[curIdx]
+                                                currentSelected[curIdx] = currentSelected[prevIdx]
+                                                currentSelected[prevIdx] = temp
+                                                dragOffsetY += itemHeight
+                                                curIdx = prevIdx
+                                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                            }
+                                        }
+                                    },
+                                    onDragEnd = {
+                                        draggingPkg = null
+                                        dragOffsetY = 0f
+                                        onAppsUpdated(currentSelected.toList())
+                                    },
+                                    onDragCancel = {
+                                        draggingPkg = null
+                                        dragOffsetY = 0f
+                                        onAppsUpdated(currentSelected.toList())
+                                    }
+                                )
+                            },
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        item(key = "reorder_top_anchor") {
+                            Spacer(modifier = Modifier.height(0.dp))
+                        }
+                        items(displayApps, key = { it.packageName }) { app ->
+                            val isSelected = selectedPackages.value.contains(app.packageName)
+                            val isDraggingThis = draggingPkg == app.packageName
+                            val itemModifier = if (isDraggingThis) {
+                                Modifier
+                                    .zIndex(10f)
+                                    .graphicsLayer {
+                                        translationY = dragOffsetY
+                                        scaleX = 1.04f
+                                        scaleY = 1.04f
+                                        shadowElevation = 10f
+                                    }
+                            } else {
+                                Modifier
+                                    .zIndex(0f)
+                                    .animateItem(
+                                        placementSpec = spring(
+                                            dampingRatio = Spring.DampingRatioLowBouncy,
+                                            stiffness = Spring.StiffnessMediumLow
+                                        )
+                                    )
+                            }
+
+                            Surface(
+                                onClick = {
+                                    if (draggingPkg == null) {
+                                        if (isSelected) {
+                                            currentSelected.removeAll { it.packageName == app.packageName }
+                                        } else {
+                                            currentSelected.add(NudgeMenuApp(app.packageName, app.label))
+                                        }
+                                        onAppsUpdated(currentSelected.toList())
+                                    }
+                                },
+                                shape = CircleShape,
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceContainerLow,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(itemModifier)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val bitmap = remember(app.packageName) {
+                                        runCatching {
+                                            (app.icon ?: context.packageManager.getApplicationIcon(app.packageName)).toBitmap(64, 64).asImageBitmap()
+                                        }.getOrNull()
+                                    }
+                                    if (bitmap != null) {
+                                        Image(
+                                            bitmap = bitmap,
+                                            contentDescription = app.label,
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        )
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = app.label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = app.packageName,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+
+                                    if (isSelected) {
+                                        Box(
+                                            modifier = Modifier
+                                                .padding(horizontal = 4.dp, vertical = 4.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(24.dp)
+                                                    .clip(CircleShape)
+                                                    .background(MaterialTheme.colorScheme.primary)
+                                                    .border(
+                                                        width = 2.dp,
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        shape = CircleShape
+                                                    ),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.Check,
+                                                    contentDescription = "Selected",
+                                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.Transparent)
+                                                .border(
+                                                    width = 2.dp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                    shape = CircleShape
+                                                ),
+                                            contentAlignment = Alignment.Center
+                                        ) {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onAppsUpdated(currentSelected.toList())
+                    onDismiss()
+                },
+                shape = CircleShape
+            ) {
+                Text("Done")
+            }
+        }
+    )
 }

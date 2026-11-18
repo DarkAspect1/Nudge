@@ -5,6 +5,7 @@ import com.nudge.edge.data.VolumeController
 import com.nudge.edge.model.AppMode
 import com.nudge.edge.model.DndModeType
 import com.nudge.edge.model.EdgeOrientationMapper
+import com.nudge.edge.model.EdgePopStyle
 import com.nudge.edge.model.EdgeSide
 import com.nudge.edge.model.HardwareTrigger
 import com.nudge.edge.model.HudTriggerMode
@@ -12,6 +13,8 @@ import com.nudge.edge.model.NudgeSettings
 import com.nudge.edge.model.ScreenEdge
 import com.nudge.edge.model.toScreenEdge
 import com.nudge.edge.ui.components.DND_BEZEL_FILLET_DP
+import com.nudge.edge.ui.components.FlatPopItem
+import com.nudge.edge.ui.components.mergeFlatPopItems
 import com.nudge.edge.ui.components.HUD_CUTOUT_BEZEL_PAD_DP
 import com.nudge.edge.ui.components.HUD_CUTOUT_FILLET_TAIL_DP
 import com.nudge.edge.ui.components.HUD_CUTOUT_INNER_PAD_DP
@@ -42,7 +45,6 @@ class NudgeSettingsTest {
         assertEquals(HudTriggerMode.SIMULTANEOUS, defaults.hudTriggerMode)
         assertTrue(defaults.enableVolumeSliderHud)
         assertFalse(defaults.showSystemPanelWhenHudOff)
-        assertEquals(7, defaults.volumeStep)
         assertFalse(defaults.floatingMode)
         assertEquals(0f, defaults.hudEdgeInsetDp, 0.001f)
         assertTrue(defaults.enableEdgePopInLandscape)
@@ -55,12 +57,16 @@ class NudgeSettingsTest {
         assertEquals(0.50f, defaults.powerButtonYFraction, 0.001f)
         assertEquals(14f, defaults.powerPopWidthDp, 0.001f)
         assertEquals(72f, defaults.powerPopHeightDp, 0.001f)
+        assertEquals(com.nudge.edge.model.EdgePopStyle.ROUNDED_TOP, defaults.edgePopStyle)
+        assertFalse(defaults.edgePopFlatTopGlowEnabled)
         assertTrue(defaults.hudSideSynced)
         assertTrue(defaults.hapticsEnabled)
         assertTrue(defaults.edgePopHapticsEnabled)
         assertTrue(defaults.volumeSliderHapticsEnabled)
+        assertTrue(defaults.soundIconModeSwitchHapticsEnabled)
         assertTrue(defaults.dndPanelHapticsEnabled)
         assertTrue(defaults.actionsPanelHapticsEnabled)
+        assertTrue(defaults.nudgeHapticsEnabled)
         assertFalse(defaults.mixerAttachToSlider)
         assertEquals(50f, defaults.mixerPositionXPercent, 0.001f)
         assertEquals(50f, defaults.mixerPositionYPercent, 0.001f)
@@ -114,6 +120,20 @@ class NudgeSettingsTest {
         assertEquals("ALONGSIDE_SLIDER", defaults.perAppVolumeDisplayMode)
         assertTrue(defaults.isAlwaysShowCallSliderInMixer)
         assertFalse(defaults.showVolumeCounter)
+        assertEquals(0, defaults.volumeSliderPillTransparency)
+        assertEquals(0f, defaults.volumeSliderBlur, 0.001f)
+        assertEquals(0f, defaults.volumeSliderPillBlurDp, 0.001f)
+        assertFalse(defaults.useShizukuForDnd)
+        assertFalse(defaults.enablePersistentNudges)
+        assertEquals(1, defaults.persistentNudges.size)
+        assertEquals(14f, defaults.nudgeWidthDp, 0.001f)
+        assertEquals(64f, defaults.nudgeHeightDp, 0.001f)
+        assertTrue(defaults.nudgeGlowEnabled)
+        assertEquals(50f, defaults.nudgeMenuWidthDp, 0.001f)
+        assertEquals(300f, defaults.nudgeMenuHeightDp, 0.001f)
+        assertEquals(0f, defaults.nudgeMenuXFraction, 0.001f)
+        assertEquals(0.50f, defaults.nudgeMenuYFraction, 0.001f)
+        assertEquals(ScreenEdge.RIGHT, defaults.nudgeMenuEdge)
     }
 
     @Test
@@ -139,8 +159,6 @@ class NudgeSettingsTest {
         assertEquals(200f, NudgeSettings.clampPopHeight(240f), 0.001f)
         assertEquals(100L, NudgeSettings.clampPopAutoHideMs(20L))
         assertEquals(1500L, NudgeSettings.clampPopAutoHideMs(5000L))
-        assertEquals(1, NudgeSettings.clampVolumeStep(0))
-        assertEquals(10, NudgeSettings.clampVolumeStep(25))
         assertEquals(100f, NudgeSettings.clampHudHeight(50f), 0.001f)
         assertEquals(260f, NudgeSettings.clampHudHeight(420f), 0.001f)
         assertEquals(28f, NudgeSettings.clampHudWidth(16f), 0.001f)
@@ -156,14 +174,14 @@ class NudgeSettingsTest {
         assertEquals(4000L, NudgeSettings.clampDndTimeoutMs(8000L))
         assertEquals(10f, NudgeSettings.clampDndWidth(5f), 0.001f)
         assertEquals(72f, NudgeSettings.clampDndWidth(100f), 0.001f)
-        assertEquals(70f, NudgeSettings.clampDndHeight(40f), 0.001f)
-        assertEquals(180f, NudgeSettings.clampDndHeight(300f), 0.001f)
+        assertEquals(40f, NudgeSettings.clampDndHeight(20f), 0.001f)
+        assertEquals(240f, NudgeSettings.clampDndHeight(300f), 0.001f)
 
         assertEquals(800L, NudgeSettings.clampModesTimeoutMs(200L))
         assertEquals(5000L, NudgeSettings.clampModesTimeoutMs(10000L))
         assertEquals(10f, NudgeSettings.clampModesWidth(5f), 0.001f)
         assertEquals(72f, NudgeSettings.clampModesWidth(90f), 0.001f)
-        assertEquals(100f, NudgeSettings.clampModesHeight(50f), 0.001f)
+        assertEquals(40f, NudgeSettings.clampModesHeight(20f), 0.001f)
         assertEquals(240f, NudgeSettings.clampModesHeight(400f), 0.001f)
 
         assertEquals(10f, NudgeSettings.clampIconSizeDp(4f), 0.001f)
@@ -478,5 +496,41 @@ class NudgeSettingsTest {
         assertTrue(HardwareTrigger.entries.contains(HardwareTrigger.CUSTOM_BTN_SINGLE))
         assertTrue(HardwareTrigger.entries.contains(HardwareTrigger.CUSTOM_BTN_DOUBLE))
         assertTrue(HardwareTrigger.entries.contains(HardwareTrigger.CUSTOM_BTN_LONG))
+    }
+
+    @Test
+    fun flatTopOverlap40PercentRule() {
+        val pop1 = FlatPopItem(startPx = 100f, endPx = 200f, protrusionPx = 14f)
+        val pop2 = FlatPopItem(startPx = 220f, endPx = 320f, protrusionPx = 14f)
+        val resultSeparate = mergeFlatPopItems(listOf(pop1, pop2))
+        assertEquals(2, resultSeparate.size)
+
+        val pop3 = FlatPopItem(startPx = 100f, endPx = 200f, protrusionPx = 14f)
+        val pop4 = FlatPopItem(startPx = 170f, endPx = 270f, protrusionPx = 14f)
+        val resultBelow40 = mergeFlatPopItems(listOf(pop3, pop4))
+        assertEquals(2, resultBelow40.size)
+
+        val pop5 = FlatPopItem(startPx = 100f, endPx = 200f, protrusionPx = 14f)
+        val pop6 = FlatPopItem(startPx = 160f, endPx = 260f, protrusionPx = 18f)
+        val result40 = mergeFlatPopItems(listOf(pop5, pop6))
+        assertEquals(1, result40.size)
+        assertEquals(100f, result40[0].startPx, 0.001f)
+        assertEquals(260f, result40[0].endPx, 0.001f)
+        assertEquals(18f, result40[0].protrusionPx, 0.001f)
+
+        val pop7 = FlatPopItem(startPx = 100f, endPx = 200f, protrusionPx = 14f)
+        val pop8 = FlatPopItem(startPx = 100f, endPx = 200f, protrusionPx = 20f)
+        val resultSamePos = mergeFlatPopItems(listOf(pop7, pop8))
+        assertEquals(1, resultSamePos.size)
+        assertEquals(100f, resultSamePos[0].startPx, 0.001f)
+        assertEquals(200f, resultSamePos[0].endPx, 0.001f)
+        assertEquals(20f, resultSamePos[0].protrusionPx, 0.001f)
+    }
+
+    @Test
+    fun edgePopStyleEnumValues() {
+        assertEquals(2, EdgePopStyle.entries.size)
+        assertEquals("Rounded Top", EdgePopStyle.ROUNDED_TOP.displayName)
+        assertEquals("Flat Top", EdgePopStyle.FLAT_TOP.displayName)
     }
 }

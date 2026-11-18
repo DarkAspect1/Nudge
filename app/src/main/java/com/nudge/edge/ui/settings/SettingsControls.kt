@@ -42,6 +42,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Remove
@@ -102,6 +103,7 @@ import com.nudge.edge.BuildConfig
 import com.nudge.edge.data.GitHubUpdateManager
 import com.nudge.edge.data.SettingsRepository
 import com.nudge.edge.data.UpdateDownloadState
+import com.nudge.edge.model.EdgePopStyle
 import com.nudge.edge.model.EdgeSide
 import com.nudge.edge.model.HudTriggerMode
 import com.nudge.edge.model.LivePreviewController
@@ -172,6 +174,11 @@ fun PopSetupTab(
             subtitle = "Matches your hardware button side",
             selectedSide = settings.popEdgeSide,
             onSideSelected = repository::setPopEdgeSide
+        )
+
+        EdgePopStyleSelectorCard(
+            settings = settings,
+            repository = repository
         )
 
         Surface(
@@ -605,54 +612,79 @@ fun SliderHudTab(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "HUD Edge Anchor",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = if (settings.hudSideSynced) {
-                                        "Synced (${settings.popEdgeSide.name.lowercase().replaceFirstChar { it.uppercase() }})"
-                                    } else {
-                                        "Independent edge anchor"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    text = "Sync",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                                Switch(
-                                    checked = settings.hudSideSynced,
-                                    onCheckedChange = repository::setHudSideSynced
-                                )
-                            }
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "HUD Edge Side",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                         EdgeSideSegmentedButtons(
                             selectedSide = settings.effectiveHudEdgeSide,
-                            onSideSelected = repository::setHudEdgeSide
+                            onSideSelected = { side ->
+                                repository.setHudEdgeSide(side)
+                                repository.setHudSideSynced(false)
+                            }
                         )
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Slider Style",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                val attachedSelected = !settings.floatingMode
+                                Surface(
+                                    onClick = { repository.setFloatingMode(false) },
+                                    shape = CircleShape,
+                                    color = if (attachedSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier.padding(vertical = 10.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "Attached",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = if (attachedSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (attachedSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                val floatingSelected = settings.floatingMode
+                                Surface(
+                                    onClick = { repository.setFloatingMode(true) },
+                                    shape = CircleShape,
+                                    color = if (floatingSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier.padding(vertical = 10.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "Floating",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = if (floatingSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (floatingSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
 
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
@@ -663,30 +695,20 @@ fun SliderHudTab(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Floating Mode",
+                                    text = "Thin Floating HUD on Multi-Press or Hold",
                                     style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
+                                    fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = if (settings.floatingMode) {
-                                        "Now: Standalone floating pill"
-                                    } else {
-                                        "Now: Edge-merged bezel notch"
-                                    },
+                                    text = "Activates when clicking volume buttons 2+ times or holding volume buttons. Touching or dragging expands it back to full size.",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Switch(
-                                checked = settings.floatingMode,
-                                onCheckedChange = repository::setFloatingMode
+                                checked = settings.enableThinVolumeHud,
+                                onCheckedChange = repository::setEnableThinVolumeHud
                             )
                         }
 
@@ -840,16 +862,6 @@ fun SliderHudTab(
                             }
                         )
 
-                        InlineStepperSlider(
-                            title = "Volume Step",
-                            valueLabel = "${settings.volumeStep} ${if (settings.volumeStep == 1) "step" else "steps"}",
-                            value = settings.volumeStep.toFloat(),
-                            valueRange = NudgeSettings.MIN_VOLUME_STEP.toFloat()..NudgeSettings.MAX_VOLUME_STEP.toFloat(),
-                            onValueChange = { repository.setVolumeStep(it.roundToInt()) },
-                            onStepDown = { repository.setVolumeStep(settings.volumeStep - 1) },
-                            onStepUp = { repository.setVolumeStep(settings.volumeStep + 1) }
-                        )
-
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                         InlineStepperSlider(
@@ -938,6 +950,39 @@ fun SliderHudTab(
                                 repository.setHudCornerRadiusDp(minOf(effectiveCornerDp + 1f, maxCornerDp))
                             }
                         )
+
+                        InlineStepperSlider(
+                            title = "Pill Transparency",
+                            valueLabel = "${settings.volumeSliderPillTransparency}%",
+                            value = settings.volumeSliderPillTransparency.toFloat(),
+                            valueRange = 0f..100f,
+                            onValueChange = { repository.setVolumeSliderPillTransparency(it.roundToInt()) },
+                            onStepDown = { repository.setVolumeSliderPillTransparency((settings.volumeSliderPillTransparency - 5).coerceAtLeast(0)) },
+                            onStepUp = { repository.setVolumeSliderPillTransparency((settings.volumeSliderPillTransparency + 5).coerceAtMost(100)) }
+                        )
+
+                        val blurFraction = settings.volumeSliderBlur
+                        val blurReadout = if (blurFraction <= 0.001f) "Off" else "${(blurFraction * 100).roundToInt()}%"
+                        InlineStepperSlider(
+                            title = "Blur",
+                            valueLabel = blurReadout,
+                            value = blurFraction * 100f,
+                            valueRange = 0f..100f,
+                            onValueChange = { repository.setVolumeSliderBlur((it / 100f).coerceIn(0f, 1f)) },
+                            onStepDown = { repository.setVolumeSliderBlur((blurFraction - 0.05f).coerceIn(0f, 1f)) },
+                            onStepUp = { repository.setVolumeSliderBlur((blurFraction + 0.05f).coerceIn(0f, 1f)) }
+                        )
+
+                        val context = LocalContext.current
+                        val isBlurActive = com.nudge.edge.service.OverlayBlurController.isRuntimeBlurActive(context)
+                        if (blurFraction > 0.001f && !isBlurActive) {
+                            Text(
+                                text = "Window blur is unavailable or paused by Battery Saver — using frosted fallback",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                            )
+                        }
                     }
                 }
 
@@ -1135,15 +1180,16 @@ fun SliderHudTab(
         var localY by remember(settings.audioMixerYPercent) { mutableFloatStateOf(settings.audioMixerYPercent) }
         var localScale by remember(settings.audioMixerScalePercent) { mutableFloatStateOf(settings.audioMixerScalePercent.toFloat()) }
 
-        Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+        AnimatedVisibility(visible = settings.enableVolumeSliderHud) {
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                modifier = Modifier.fillMaxWidth()
             ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -1350,6 +1396,7 @@ fun SliderHudTab(
                 }
             }
         }
+    }
     }
 }
 
@@ -2156,16 +2203,67 @@ fun SystemTab(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Actions",
+                                text = "Switch Modes via Sound Icon",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Switch(
+                                checked = settings.soundIconModeSwitchHapticsEnabled,
+                                onCheckedChange = repository::setSoundIconModeSwitchHapticsEnabled
+                            )
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "DND / Silent Panel",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Switch(
+                                checked = settings.dndPanelHapticsEnabled,
+                                onCheckedChange = repository::setDndPanelHapticsEnabled
+                            )
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Actions Panel",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Medium
                             )
                             Switch(
                                 checked = settings.actionsPanelHapticsEnabled,
-                                onCheckedChange = {
-                                    repository.setActionsPanelHapticsEnabled(it)
-                                    repository.setDndPanelHapticsEnabled(it)
-                                }
+                                onCheckedChange = repository::setActionsPanelHapticsEnabled
+                            )
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Nudge",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Switch(
+                                checked = settings.nudgeHapticsEnabled,
+                                onCheckedChange = repository::setNudgeHapticsEnabled
                             )
                         }
                     }
@@ -2510,6 +2608,81 @@ fun ManageCloakedAppsDialog(
             }
         }
     )
+}
+
+@Composable
+private fun EdgePopStyleSelectorCard(
+    settings: NudgeSettings,
+    repository: SettingsRepository
+) {
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column {
+                Text(
+                    text = "Edge Pop Style",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "Choose between classic rounded dome or flat-top bezel extrusion",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                EdgePopStyle.entries.forEach { style ->
+                    SelectablePillButton(
+                        label = style.displayName,
+                        selected = settings.edgePopStyle == style,
+                        onClick = { repository.setEdgePopStyle(style) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            if (settings.edgePopStyle == EdgePopStyle.FLAT_TOP) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "White Under-Glow",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Subtle white glow underneath Flat Top edges",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Switch(
+                        checked = settings.edgePopFlatTopGlowEnabled,
+                        onCheckedChange = repository::setEdgePopFlatTopGlowEnabled
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable

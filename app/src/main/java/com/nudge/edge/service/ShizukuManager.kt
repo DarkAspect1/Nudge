@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +50,8 @@ object ShizukuManager {
 
     @Volatile var isPowerButtonPhysicallyDown: Boolean = false
     @Volatile var lastPowerDownTimeMs: Long = 0L
+    @Volatile var onPowerKeyLongPress: (() -> Unit)? = null
+    private var powerLongPressJob: Job? = null
 
     private var getEventJob: Job? = null
 
@@ -163,8 +166,16 @@ object ShizukuManager {
                         if (l.contains("DOWN")) {
                             isPowerButtonPhysicallyDown = true
                             lastPowerDownTimeMs = SystemClock.uptimeMillis()
+                            powerLongPressJob?.cancel()
+                            powerLongPressJob = scope.launch {
+                                delay(500L)
+                                if (isPowerButtonPhysicallyDown) {
+                                    onPowerKeyLongPress?.invoke()
+                                }
+                            }
                         } else if (l.contains("UP")) {
                             isPowerButtonPhysicallyDown = false
+                            powerLongPressJob?.cancel()
                         }
                     }
                 }
@@ -174,6 +185,8 @@ object ShizukuManager {
     }
 
     fun stopInputEventMonitoring() {
+        powerLongPressJob?.cancel()
+        powerLongPressJob = null
         getEventJob?.cancel()
         getEventJob = null
         isPowerButtonPhysicallyDown = false
@@ -286,8 +299,8 @@ object ShizukuManager {
     fun grantPowerTriggerOnlyViaShizuku(context: Context, onComplete: (() -> Unit)? = null) {
         runWithShizuku(context) {
             scope.launch {
-                runCommand("settings put secure assistant com.nudge.edge/com.nudge.edge.service.NudgePowerTriggerActivity")
-                runCommand("settings put secure voice_interaction_service \"\"")
+                runCommand("settings put secure voice_interaction_service com.nudge.edge/com.nudge.edge.service.NudgeVoiceInteractionService")
+                runCommand("settings put secure assistant com.nudge.edge/com.nudge.edge.service.NudgeVoiceInteractionService")
                 withContext(Dispatchers.Main) {
                     onComplete?.invoke()
                 }
@@ -307,8 +320,8 @@ object ShizukuManager {
                 "pm grant com.nudge.edge android.permission.POST_NOTIFICATIONS",
                 "cmd notification allow_dnd com.nudge.edge",
                 "appops set com.nudge.edge ACCESS_NOTIFICATION_POLICY allow",
-                "settings put secure assistant com.nudge.edge/com.nudge.edge.service.NudgePowerTriggerActivity",
-                "settings put secure voice_interaction_service \"\"",
+                "settings put secure voice_interaction_service com.nudge.edge/com.nudge.edge.service.NudgeVoiceInteractionService",
+                "settings put secure assistant com.nudge.edge/com.nudge.edge.service.NudgeVoiceInteractionService",
                 "dumpsys deviceidle whitelist +com.nudge.edge",
                 "cmd deviceidle whitelist +com.nudge.edge",
                 "cmd appops set com.nudge.edge RUN_IN_BACKGROUND allow",
@@ -415,10 +428,21 @@ object ShizukuManager {
     }
 
     fun getForegroundPackageViaShizuku(): String? {
-        val out = runCommand("dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity'")
+        val windowOut = runCommand("dumpsys window displays")
+        if (windowOut.isNotBlank()) {
+            val focusRegex = Regex("""mCurrentFocus=Window\{[a-f0-9]+\s+[^\s]+\s+([a-zA-Z0-9_.]+)/""")
+            val m = focusRegex.find(windowOut)
+            if (m != null) {
+                val pkg = m.groupValues[1]
+                if (pkg.isNotBlank() && pkg != "null") return pkg
+            }
+        }
+        val out = runCommand("dumpsys activity activities")
         if (out.isBlank()) return null
 
-        val match = Regex("""([a-zA-Z0-9_.]+)/[a-zA-Z0-9_.]*""").find(out)
+        val match = Regex("""(?:mResumedActivity|topResumedActivity)=ActivityRecord\{[a-f0-9]+\s+[^\s]+\s+([a-zA-Z0-9_.]+)/""").find(out)
+            ?: Regex("""(?:mResumedActivity|topResumedActivity):\s+ActivityRecord\{[a-f0-9]+\s+[^\s]+\s+([a-zA-Z0-9_.]+)/""").find(out)
+            ?: Regex("""([a-zA-Z0-9_.]+)/[a-zA-Z0-9_.]*""").find(out)
         return match?.groupValues?.getOrNull(1)
     }
 }

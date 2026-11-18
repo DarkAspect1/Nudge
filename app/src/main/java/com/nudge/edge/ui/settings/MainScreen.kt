@@ -193,6 +193,7 @@ fun MainScreen(
                 sliderCornerRadiusDp = settings.hudCornerRadiusDp,
                 lightMode = settings.lightMode,
                 hapticsEnabled = settings.effectiveVolumeSliderHaptics,
+                isCallActive = volumeController.isCallActive(),
                 isAlwaysShowCallSlider = settings.isAlwaysShowCallSliderInMixer,
                 isVisible = isModalOpen,
                 audioMixerScalePercent = settings.audioMixerScalePercent,
@@ -208,7 +209,10 @@ fun MainScreen(
                 sliderEdge = if (settings.effectiveHudEdgeSide == EdgeSide.RIGHT) ScreenEdge.RIGHT else ScreenEdge.LEFT,
                 sliderYFraction = settings.hudYFraction,
                 sliderXFraction = 0.5f,
-                sliderEdgeInsetDp = if (settings.floatingMode) settings.hudEdgeInsetDp else 0f,
+                sliderEdgeInsetDp = settings.hudEdgeInsetDp,
+                pillTransparency = settings.volumeSliderPillTransparency,
+                volumeSliderBlur = settings.volumeSliderBlur,
+                pillBlurDp = settings.volumeSliderPillBlurDp,
                 onMusicFractionChanged = onVolumeFractionUpdated,
                 onOpenSettings = { localModalVisible = false },
                 onDismiss = {
@@ -318,7 +322,7 @@ private fun SettingsCardPane(
                         musicMaxVolume = musicMaxVolume,
                         repository = repository
                     )
-                    SettingsTab.MODES -> ModesTab(
+                    SettingsTab.MODES -> ActionsTab(
                         settings = settings,
                         repository = repository
                     )
@@ -386,16 +390,11 @@ private fun LocalFallbackEdgePreviewLayer(
         settings.popEdgeSide,
         displayRotation
     )
-    val hudScreenEdge = if (isRealLandscape) {
-        settings.landscapeHudEdgeSide
-    } else if (isPreviewLandscape) {
-        mapLandscapeEdgeToPhysicalPortrait(settings.landscapeHudEdgeSide)
-    } else {
-        EdgeOrientationMapper.resolveHudScreenEdge(
-            settings = settings,
-            rotation = displayRotation
-        )
-    }
+    val hudScreenEdge = EdgeOrientationMapper.resolveActiveHudScreenEdge(
+        settings = settings,
+        rotation = displayRotation,
+        previewLandscape = isPreviewLandscape
+    )
 
     val showUp = popAllowed && (
         previewTarget == PreviewTarget.POP_UP ||
@@ -445,13 +444,11 @@ private fun LocalFallbackEdgePreviewLayer(
         }
 
         if (showHud) {
-            val fraction = if (isRealLandscape) {
-                settings.landscapeHudYFraction
-            } else if (isPreviewLandscape) {
-                mapLandscapeOffsetToPhysicalPortrait(settings.landscapeHudEdgeSide, settings.landscapeHudYFraction)
-            } else {
-                EdgeOrientationMapper.resolveAxisFraction(settings.hudYFraction, displayRotation)
-            }
+            val fraction = EdgeOrientationMapper.resolveActiveHudAxisFraction(
+                settings = settings,
+                rotation = displayRotation,
+                previewLandscape = isPreviewLandscape
+            )
             val offset = if (hudIsVertical) {
                 val y = ((fraction * screenHeightPx).coerceIn(0f, screenHeightPx) - hudSpanPx / 2f).roundToInt().coerceIn(0, (screenHeightPx - hudSpanPx).toInt().coerceAtLeast(0))
                 IntOffset(0, y)
@@ -474,6 +471,8 @@ private fun LocalFallbackEdgePreviewLayer(
                     volumeFraction = musicVolumeFraction,
                     isVisible = true,
                     volumeSliderFluidityPercent = settings.volumeSliderFluidityPercent,
+                    pillTransparency = settings.volumeSliderPillTransparency,
+                    pillBlurDp = settings.volumeSliderPillBlurDp,
                     onVolumeScrub = onScrubFraction,
                     onScrubStateChanged = onScrubStateChanged,
                     onOpenMenu = onOpenMenu,
@@ -493,14 +492,21 @@ private fun LocalFallbackEdgePreviewLayer(
             val dndScreenEdge = if (isRealLandscape) {
                 settings.dndLandscapeEdge.toScreenEdge()
             } else if (isPreviewLandscape) {
-                mapLandscapeEdgeToPhysicalPortrait(settings.dndLandscapeEdge.toScreenEdge())
+                EdgeOrientationMapper.mapLandscapeEdgeToPhysicalPortrait(
+                    settings.dndLandscapeEdge.toScreenEdge(),
+                    displayRotation
+                )
             } else {
                 settings.dndPortraitEdge.toScreenEdge()
             }
             val baseDndOffset = if (isRealLandscape) {
                 settings.dndLandscapeOffsetPercent
             } else if (isPreviewLandscape) {
-                mapLandscapeOffsetToPhysicalPortrait(settings.dndLandscapeEdge.toScreenEdge(), settings.dndLandscapeOffsetPercent)
+                EdgeOrientationMapper.mapLandscapeOffsetToPhysicalPortrait(
+                    settings.dndLandscapeEdge.toScreenEdge(),
+                    settings.dndLandscapeOffsetPercent,
+                    displayRotation
+                )
             } else {
                 settings.dndPortraitOffsetPercent
             }
@@ -541,14 +547,21 @@ private fun LocalFallbackEdgePreviewLayer(
             val modesScreenEdge = if (isRealLandscape) {
                 settings.modesLandscapeEdge.toScreenEdge()
             } else if (isPreviewLandscape) {
-                mapLandscapeEdgeToPhysicalPortrait(settings.modesLandscapeEdge.toScreenEdge())
+                EdgeOrientationMapper.mapLandscapeEdgeToPhysicalPortrait(
+                    settings.modesLandscapeEdge.toScreenEdge(),
+                    displayRotation
+                )
             } else {
                 settings.modesPortraitEdge.toScreenEdge()
             }
             val baseModesOffset = if (isRealLandscape) {
                 settings.modesLandscapeOffsetPercent
             } else if (isPreviewLandscape) {
-                mapLandscapeOffsetToPhysicalPortrait(settings.modesLandscapeEdge.toScreenEdge(), settings.modesLandscapeOffsetPercent)
+                EdgeOrientationMapper.mapLandscapeOffsetToPhysicalPortrait(
+                    settings.modesLandscapeEdge.toScreenEdge(),
+                    settings.modesLandscapeOffsetPercent,
+                    displayRotation
+                )
             } else {
                 settings.modesPortraitOffsetPercent
             }
@@ -586,25 +599,6 @@ private fun LocalFallbackEdgePreviewLayer(
                 )
             }
         }
-    }
-}
-
-private fun mapLandscapeEdgeToPhysicalPortrait(landscapeEdge: ScreenEdge): ScreenEdge {
-    return when (landscapeEdge) {
-        ScreenEdge.RIGHT -> ScreenEdge.BOTTOM
-        ScreenEdge.LEFT -> ScreenEdge.TOP
-        ScreenEdge.TOP -> ScreenEdge.RIGHT
-        ScreenEdge.BOTTOM -> ScreenEdge.LEFT
-    }
-}
-
-private fun mapLandscapeOffsetToPhysicalPortrait(landscapeEdge: ScreenEdge, offsetPercent: Float): Float {
-    val physicalEdge = mapLandscapeEdgeToPhysicalPortrait(landscapeEdge)
-    val isPhysicalHorizontal = (physicalEdge == ScreenEdge.TOP || physicalEdge == ScreenEdge.BOTTOM)
-    return if (isPhysicalHorizontal) {
-        (1f - offsetPercent).coerceIn(0f, 1f)
-    } else {
-        offsetPercent.coerceIn(0f, 1f)
     }
 }
 

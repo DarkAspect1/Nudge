@@ -1,2 +1,5 @@
 -keepattributes *Annotation*
 -keepclassmembers class com.nudge.edge.** { *; }
+-keep class com.nudge.edge.service.ShizukuInputService { <init>(...); }
+-keep class com.nudge.edge.service.IShizukuInputService* { *; }
+-keep class com.nudge.edge.service.IShizukuInputCallback* { *; }

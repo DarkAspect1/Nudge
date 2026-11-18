@@ -1,327 +1,277 @@
 package com.nudge.edge.data
 
 import android.content.Context
-import android.content.pm.PackageManager
 import android.media.AudioManager
-import android.media.AudioPlaybackConfiguration
-import android.os.Build
-import android.os.IBinder
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import org.lsposed.hiddenapibypass.HiddenApiBypass
-import rikka.shizuku.Shizuku
-import rikka.shizuku.ShizukuBinderWrapper
-import java.lang.reflect.Field
-import java.lang.reflect.Method
-import kotlin.math.ceil
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 
-enum class VolumeEngineMode {
-    OEM_FINE_VOLUME,
-    NATIVE_HIGH_SCALE,
-    SHIZUKU_HYBRID_FINE,
-    NATIVE_COARSE
-}
+class FineVolumeController(context: Context) {
 
-class FineVolumeController(
-    private val context: Context,
-    private val audioManager: AudioManager
-) {
-    private var semGetFineVolumeMethod: Method? = null
-    private var semSetFineVolumeMethod: Method? = null
-
-    private var iAudioService: Any? = null
-    private var getActiveConfigsMethod: Method? = null
-    private var getClientUidMethod: Method? = null
-    private var getPlayerStateMethod: Method? = null
-    private var getPlayerProxyMethod: Method? = null
-    private var playerSetVolumeMethod: Method? = null
-    private var iPlayerSetVolumeMethod: Method? = null
-
-    private var clientUidField: Field? = null
-    private var playerStateField: Field? = null
-    private var iPlayerField: Field? = null
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     companion object {
-        private val _staticEngineMode = MutableStateFlow(VolumeEngineMode.NATIVE_COARSE)
-        val currentEngineMode: StateFlow<VolumeEngineMode> = _staticEngineMode.asStateFlow()
+        const val FINE_MULTIPLIER = 10
+
+        val ALL_MIXER_STREAMS = intArrayOf(
+            AudioManager.STREAM_MUSIC,
+            AudioManager.STREAM_RING,
+            AudioManager.STREAM_NOTIFICATION,
+            AudioManager.STREAM_ALARM,
+            AudioManager.STREAM_VOICE_CALL
+        )
     }
 
-    private val _currentEngineMode = MutableStateFlow(VolumeEngineMode.NATIVE_COARSE)
-    val currentEngineMode: StateFlow<VolumeEngineMode> = _currentEngineMode.asStateFlow()
+    private val cachedFineVolumeByStream = ConcurrentHashMap<Int, Int>()
 
-    private val _isShizukuAudioReady = MutableStateFlow(false)
-    val isShizukuAudioReady: StateFlow<Boolean> = _isShizukuAudioReady.asStateFlow()
+    private val getFineVolume = runCatching {
+        AudioManager::class.java.getMethod("semGetFineVolume", Int::class.javaPrimitiveType)
+    }.getOrNull()
 
-    private var subStepMultiplier: Int = 1
-    private val _dynamicMaxLimit = MutableStateFlow(getNativeHardwareRange(AudioManager.STREAM_MUSIC).second)
-    val dynamicMaxLimit: StateFlow<Int> = _dynamicMaxLimit.asStateFlow()
-    val maxMediaVolumeLimit: StateFlow<Int> get() = dynamicMaxLimit
+    private val setFineVolume = runCatching {
+        AudioManager::class.java.getMethod(
+            "semSetFineVolume",
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType
+        )
+    }.getOrNull()
 
-    init {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            runCatching { HiddenApiBypass.addHiddenApiExemptions("L") }
-        }
-        verifyAndResolveEngineMode()
+    fun getStreamMinIndex(streamType: Int): Int {
+        return runCatching { audioManager.getStreamMinVolume(streamType) }.getOrDefault(0).coerceAtLeast(0)
     }
 
-    fun getNativeHardwareRange(streamType: Int): Pair<Int, Int> {
-        val minIdx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            runCatching { audioManager.getStreamMinVolume(streamType) }.getOrDefault(0)
-        } else 0
-        val maxIdx = runCatching { audioManager.getStreamMaxVolume(streamType) }.getOrDefault(15)
-        val range = (maxIdx - minIdx).coerceAtLeast(1)
-        return minIdx to range
+    fun getStreamMaxIndex(streamType: Int): Int {
+        val min = getStreamMinIndex(streamType)
+        return runCatching { audioManager.getStreamMaxVolume(streamType) }
+            .getOrDefault(min.coerceAtLeast(1))
+            .coerceAtLeast(min.coerceAtLeast(1))
     }
 
-    fun verifyAndResolveEngineMode(): VolumeEngineMode {
-        val (_, nativeRange) = getNativeHardwareRange(AudioManager.STREAM_MUSIC)
-
-        val shizukuReady = bindAndVerifyShizukuAudioService()
-        _isShizukuAudioReady.value = shizukuReady
-
-        val oemFineResolved = runCatching {
-            val getMethod = AudioManager::class.java.getMethod("semGetFineVolume", Int::class.javaPrimitiveType)
-            val setMethod = AudioManager::class.java.getMethod(
-                "semSetFineVolume",
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType
-            )
-            val initialFine = getMethod.invoke(audioManager, AudioManager.STREAM_MUSIC) as Int
-            if (initialFine >= 0) {
-                setMethod.invoke(audioManager, AudioManager.STREAM_MUSIC, initialFine, 0)
-                val verifyFine = getMethod.invoke(audioManager, AudioManager.STREAM_MUSIC) as Int
-                if (initialFine == verifyFine) {
-                    semGetFineVolumeMethod = getMethod
-                    semSetFineVolumeMethod = setMethod
-                    true
-                } else false
-            } else false
-        }.getOrDefault(false)
-
-        if (oemFineResolved) {
-            subStepMultiplier = 10
-            _dynamicMaxLimit.value = nativeRange * subStepMultiplier
-            _currentEngineMode.value = VolumeEngineMode.OEM_FINE_VOLUME
-            _staticEngineMode.value = VolumeEngineMode.OEM_FINE_VOLUME
-            return VolumeEngineMode.OEM_FINE_VOLUME
-        }
-
-        if (nativeRange > 35) {
-            subStepMultiplier = 1
-            _dynamicMaxLimit.value = nativeRange
-            _currentEngineMode.value = VolumeEngineMode.NATIVE_HIGH_SCALE
-            _staticEngineMode.value = VolumeEngineMode.NATIVE_HIGH_SCALE
-            return VolumeEngineMode.NATIVE_HIGH_SCALE
-        }
-
-        if (shizukuReady) {
-            subStepMultiplier = 10
-            _dynamicMaxLimit.value = nativeRange * subStepMultiplier
-            _currentEngineMode.value = VolumeEngineMode.SHIZUKU_HYBRID_FINE
-            _staticEngineMode.value = VolumeEngineMode.SHIZUKU_HYBRID_FINE
-            return VolumeEngineMode.SHIZUKU_HYBRID_FINE
-        }
-
-        subStepMultiplier = 1
-        _dynamicMaxLimit.value = nativeRange
-        _currentEngineMode.value = VolumeEngineMode.NATIVE_COARSE
-        _staticEngineMode.value = VolumeEngineMode.NATIVE_COARSE
-        return VolumeEngineMode.NATIVE_COARSE
+    fun getStreamFineMaxCount(streamType: Int): Int {
+        return getStreamMaxIndex(streamType) * FINE_MULTIPLIER
     }
 
-    fun isCoarseHardwareOnly(): Boolean {
-        return _currentEngineMode.value == VolumeEngineMode.NATIVE_COARSE
-    }
-
-    fun bindAndVerifyShizukuAudioService(): Boolean {
-        return runCatching {
-            if (!Shizuku.pingBinder() || Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                return false
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                runCatching { HiddenApiBypass.addHiddenApiExemptions("L") }
-            }
-
-            val serviceManagerClass = Class.forName("android.os.ServiceManager")
-            val getServiceMethod = serviceManagerClass.getDeclaredMethod("getService", String::class.java).apply {
-                isAccessible = true
-            }
-            val rawBinder = getServiceMethod.invoke(null, Context.AUDIO_SERVICE) as? IBinder ?: return false
-            val wrappedBinder = ShizukuBinderWrapper(rawBinder)
-
-            val stubClass = Class.forName("android.media.IAudioService\$Stub")
-            val asInterfaceMethod = stubClass.getDeclaredMethod("asInterface", IBinder::class.java).apply {
-                isAccessible = true
-            }
-            val serviceInstance = asInterfaceMethod.invoke(null, wrappedBinder) ?: return false
-
-            val activeConfigsMethod = serviceInstance.javaClass.getDeclaredMethod("getActivePlaybackConfigurations").apply {
-                isAccessible = true
-            }
-            val probe1 = activeConfigsMethod.invoke(serviceInstance) as? List<*> ?: return false
-            val probe2 = activeConfigsMethod.invoke(serviceInstance) as? List<*> ?: return false
-
-            val apcClass = AudioPlaybackConfiguration::class.java
-            getClientUidMethod = runCatching {
-                apcClass.getDeclaredMethod("getClientUid").apply { isAccessible = true }
-            }.getOrNull()
-            getPlayerStateMethod = runCatching {
-                apcClass.getDeclaredMethod("getPlayerState").apply { isAccessible = true }
-            }.getOrNull()
-            getPlayerProxyMethod = runCatching {
-                apcClass.getDeclaredMethod("getPlayerProxy").apply { isAccessible = true }
-            }.getOrNull()
-
-            clientUidField = runCatching {
-                apcClass.getDeclaredField("mClientUid").apply { isAccessible = true }
-            }.getOrNull()
-            playerStateField = runCatching {
-                apcClass.getDeclaredField("mPlayerState").apply { isAccessible = true }
-            }.getOrNull()
-            iPlayerField = runCatching {
-                apcClass.getDeclaredField("mIPlayer").apply { isAccessible = true }
-            }.getOrNull()
-
-            val playerProxyClass = Class.forName("android.media.PlayerProxy")
-            playerSetVolumeMethod = runCatching {
-                playerProxyClass.getDeclaredMethod("setVolume", Float::class.javaPrimitiveType).apply {
-                    isAccessible = true
-                }
-            }.getOrNull()
-
-            val iPlayerClass = Class.forName("android.media.IPlayer")
-            iPlayerSetVolumeMethod = runCatching {
-                iPlayerClass.getDeclaredMethod("setVolume", Float::class.javaPrimitiveType).apply {
-                    isAccessible = true
-                }
-            }.getOrNull()
-
-            iAudioService = serviceInstance
-            getActiveConfigsMethod = activeConfigsMethod
-            _isShizukuAudioReady.value = true
-            true
-        }.getOrDefault(false)
-    }
-
-    fun getRawActivePlaybackConfigurations(): List<Any>? {
-        if (iAudioService == null || getActiveConfigsMethod == null) {
-            if (!bindAndVerifyShizukuAudioService()) return null
-        }
-        return runCatching {
-            @Suppress("UNCHECKED_CAST")
-            getActiveConfigsMethod?.invoke(iAudioService) as? List<Any>
-        }.getOrNull()
-    }
-
-    fun getClientUid(config: Any): Int {
-        return runCatching {
-            (getClientUidMethod?.invoke(config) as? Int)
-                ?: (clientUidField?.getInt(config))
-                ?: -1
-        }.getOrDefault(-1)
-    }
-
-    fun getPlayerState(config: Any): Int {
-        return runCatching {
-            (getPlayerStateMethod?.invoke(config) as? Int)
-                ?: (playerStateField?.getInt(config))
-                ?: -1
-        }.getOrDefault(-1)
-    }
-
-    fun getPlayerProxy(config: Any): Any? {
-        return runCatching {
-            getPlayerProxyMethod?.invoke(config) ?: iPlayerField?.get(config)
-        }.getOrNull()
-    }
-
-    fun getAudioUsage(config: Any): Int {
-        return runCatching {
-            if (config is AudioPlaybackConfiguration) {
-                config.audioAttributes?.usage ?: 0
-            } else {
-                val method = config.javaClass.getMethod("getAudioAttributes")
-                val attrs = method.invoke(config)
-                val usageMethod = attrs?.javaClass?.getMethod("getUsage")
-                usageMethod?.invoke(attrs) as? Int ?: 0
-            }
-        }.getOrDefault(0)
-    }
-
-    fun setPlayerProxyVolume(proxyOrIPlayer: Any, gain: Float): Boolean {
-        val clamped = gain.coerceIn(0f, 1f)
-        return runCatching {
-            when {
-                playerSetVolumeMethod != null && proxyOrIPlayer.javaClass.name == "android.media.PlayerProxy" -> {
-                    playerSetVolumeMethod?.invoke(proxyOrIPlayer, clamped)
-                    true
-                }
-                iPlayerSetVolumeMethod != null -> {
-                    iPlayerSetVolumeMethod?.invoke(proxyOrIPlayer, clamped)
-                    true
-                }
-                else -> {
-                    val m = proxyOrIPlayer.javaClass.getDeclaredMethod("setVolume", Float::class.javaPrimitiveType)
-                    m.isAccessible = true
-                    m.invoke(proxyOrIPlayer, clamped)
-                    true
-                }
-            }
-        }.getOrDefault(false)
-    }
-
-    fun getStreamCurrentSteps(streamType: Int): Int {
-        val (minIdx, nativeRange) = getNativeHardwareRange(streamType)
-        val limit = _dynamicMaxLimit.value.coerceAtLeast(1)
-
-        if (streamType == AudioManager.STREAM_MUSIC && _currentEngineMode.value == VolumeEngineMode.OEM_FINE_VOLUME) {
-            val fineVal = runCatching {
-                semGetFineVolumeMethod?.invoke(audioManager, AudioManager.STREAM_MUSIC) as? Int
-            }.getOrNull()
-            if (fineVal != null) return fineVal.coerceIn(0, limit)
-        }
-
-        val currentNative = (audioManager.getStreamVolume(streamType) - minIdx).coerceIn(0, nativeRange)
-        return ((currentNative.toFloat() / nativeRange.toFloat()) * limit.toFloat()).roundToInt().coerceIn(0, limit)
-    }
-
-    fun applyStreamSteps(streamType: Int, targetSteps: Int, flags: Int = 0): Float {
-        val (minIdx, nativeRange) = getNativeHardwareRange(streamType)
-        val limit = _dynamicMaxLimit.value.coerceAtLeast(1)
-        val clampedSteps = targetSteps.coerceIn(0, limit)
-        val normalized = clampedSteps.toFloat() / limit.toFloat()
-
-        if (streamType == AudioManager.STREAM_MUSIC) {
-            when (_currentEngineMode.value) {
-                VolumeEngineMode.OEM_FINE_VOLUME -> {
-                    runCatching {
-                        semSetFineVolumeMethod?.invoke(audioManager, AudioManager.STREAM_MUSIC, clampedSteps, flags)
-                        val verify = semGetFineVolumeMethod?.invoke(audioManager, AudioManager.STREAM_MUSIC) as? Int
-                        if (verify != null && verify != clampedSteps) {
-                            semSetFineVolumeMethod?.invoke(audioManager, AudioManager.STREAM_MUSIC, clampedSteps, flags)
-                        }
-                    }
-                    return 1.0f
-                }
-                VolumeEngineMode.SHIZUKU_HYBRID_FINE -> {
-                    val exactHardwarePos = normalized * nativeRange.toFloat()
-                    val ceilingIndex = ceil(exactHardwarePos).toInt().coerceIn(0, nativeRange)
-                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, minIdx + ceilingIndex, flags)
-                    return if (ceilingIndex == 0) 0f else (exactHardwarePos / ceilingIndex.toFloat()).coerceIn(0f, 1f)
-                }
-                else -> {
-                    val targetNative = (minIdx + (normalized * nativeRange.toFloat()).roundToInt()).coerceIn(minIdx, minIdx + nativeRange)
-                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetNative, flags)
-                    return 1.0f
-                }
-            }
+    fun getEffectiveMinIndex(streamType: Int): Int {
+        val maxIdx = getStreamMaxIndex(streamType)
+        return if (streamType == AudioManager.STREAM_VOICE_CALL) {
+            1.coerceAtMost(maxIdx)
         } else {
-            val targetNative = (minIdx + (normalized * nativeRange.toFloat()).roundToInt()).coerceIn(minIdx, minIdx + nativeRange)
-            audioManager.setStreamVolume(streamType, targetNative, flags)
-            return 1.0f
+            getStreamMinIndex(streamType)
+        }
+    }
+
+    fun getStreamMinNormalizedFraction(streamType: Int): Float {
+        val maxIdx = getStreamMaxIndex(streamType)
+        if (maxIdx <= 0) return 0f
+
+        if (streamType == AudioManager.STREAM_VOICE_CALL) {
+            val effMin = 1.coerceAtMost(maxIdx)
+            return (effMin.toFloat() / maxIdx.toFloat()).coerceIn(0f, 1f)
+        }
+        return 0f
+    }
+
+    fun getStreamDisplayVolumeCount(streamType: Int, normalizedFraction: Float): Int {
+        val maxIdx = getStreamMaxIndex(streamType)
+        val fineMax = maxIdx * FINE_MULTIPLIER
+        if (fineMax <= 0) return 0
+        val clamped = normalizedFraction.coerceIn(0f, 1f)
+
+        if (streamType == AudioManager.STREAM_VOICE_CALL) {
+            val effMin = getEffectiveMinIndex(streamType)
+            val minFine = effMin * FINE_MULTIPLIER
+            return (clamped * fineMax).roundToInt().coerceIn(minFine, fineMax)
+        }
+        return (clamped * fineMax).roundToInt().coerceIn(0, fineMax)
+    }
+
+    fun stepStreamWithSystem(streamType: Int, direction: Int): Float {
+        val adjustDir = if (direction > 0) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+        val flags = if (streamType == AudioManager.STREAM_RING) AudioManager.FLAG_ALLOW_RINGER_MODES else 0
+
+        if (direction > 0) unmuteStreamIfNeeded(streamType, flags)
+
+        cachedFineVolumeByStream.remove(streamType)
+        runCatching { audioManager.adjustStreamVolume(streamType, adjustDir, flags) }
+
+        if (streamType == AudioManager.STREAM_VOICE_CALL) {
+            val effMin = getEffectiveMinIndex(streamType)
+            val currentCoarse = runCatching { audioManager.getStreamVolume(streamType) }.getOrDefault(effMin)
+            if (currentCoarse < effMin) {
+                runCatching { audioManager.setStreamVolume(streamType, effMin, 0) }
+            }
+        }
+
+        return readSystemNormalizedVolume(streamType)
+    }
+
+    fun readSystemNormalizedVolume(streamType: Int): Float {
+        val maxIdx = getStreamMaxIndex(streamType)
+        val minIdx = getStreamMinIndex(streamType)
+        val range = maxIdx - minIdx
+        if (range <= 0) return 0f
+
+        val currentIdx = runCatching { audioManager.getStreamVolume(streamType) }
+            .getOrDefault(minIdx)
+            .coerceIn(minIdx, maxIdx)
+
+        if (streamType == AudioManager.STREAM_VOICE_CALL) {
+            val effMin = getEffectiveMinIndex(streamType)
+            val clampedIdx = currentIdx.coerceIn(effMin, maxIdx)
+            val fineMax = maxIdx * FINE_MULTIPLIER
+            val cachedFine = cachedFineVolumeByStream[streamType]
+            if (cachedFine != null) {
+                val expectedCoarse = (cachedFine.toFloat() / FINE_MULTIPLIER.toFloat()).roundToInt().coerceIn(effMin, maxIdx)
+                if (expectedCoarse == clampedIdx) {
+                    return (cachedFine.toFloat() / fineMax.toFloat()).coerceIn(0f, 1f)
+                }
+            }
+
+            val rawFraction = (clampedIdx.toFloat() / maxIdx.toFloat()).coerceIn(0f, 1f)
+            val targetFine = (rawFraction * fineMax).roundToInt().coerceIn(effMin * FINE_MULTIPLIER, fineMax)
+            cachedFineVolumeByStream[streamType] = targetFine
+            return (targetFine.toFloat() / fineMax.toFloat()).coerceIn(0f, 1f)
+        }
+
+        if ((streamType == AudioManager.STREAM_RING || streamType == AudioManager.STREAM_NOTIFICATION) &&
+            runCatching { audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL }.getOrDefault(false)
+        ) {
+            cachedFineVolumeByStream[streamType] = 0
+            return 0f
+        }
+
+        val fineMax = maxIdx * FINE_MULTIPLIER
+
+        if (getFineVolume != null && streamType == AudioManager.STREAM_MUSIC) {
+            val fineVol = runCatching {
+                getFineVolume?.invoke(audioManager, streamType) as Int
+            }.getOrDefault(-1)
+
+            if (fineVol in 0..fineMax) {
+                if (fineVol == 0) {
+                    cachedFineVolumeByStream[streamType] = 0
+                    return 0f
+                }
+                val isMuted = runCatching { audioManager.isStreamMute(streamType) }.getOrDefault(false)
+                val coarseVol = runCatching { audioManager.getStreamVolume(streamType) }.getOrDefault(0)
+                if (isMuted && coarseVol > 0) {
+                    cachedFineVolumeByStream[streamType] = 0
+                    return 0f
+                }
+                cachedFineVolumeByStream[streamType] = fineVol
+                return (fineVol.toFloat() / fineMax.toFloat()).coerceIn(0f, 1f)
+            }
+        }
+
+        val isMuted = runCatching { audioManager.isStreamMute(streamType) }.getOrDefault(false)
+        if (isMuted) {
+            cachedFineVolumeByStream[streamType] = 0
+            return 0f
+        }
+
+        if (currentIdx <= minIdx) {
+            cachedFineVolumeByStream[streamType] = 0
+            return 0f
+        }
+
+        val cachedFine = cachedFineVolumeByStream[streamType]
+        if (cachedFine != null && cachedFine in 1..fineMax) {
+            val expectedCoarse = (cachedFine.toFloat() / FINE_MULTIPLIER.toFloat())
+                .roundToInt()
+                .coerceIn(minIdx, maxIdx)
+            if (expectedCoarse == currentIdx) {
+                return (cachedFine.toFloat() / fineMax.toFloat()).coerceIn(0f, 1f)
+            }
+        }
+
+        val rawFraction = (currentIdx - minIdx).toFloat() / range.toFloat()
+        val fineFromCoarse = (rawFraction * fineMax).roundToInt().coerceIn(0, fineMax)
+        cachedFineVolumeByStream[streamType] = fineFromCoarse
+        return (fineFromCoarse.toFloat() / fineMax.toFloat()).coerceIn(0f, 1f)
+    }
+
+    fun setStreamFromTouchDrag(streamType: Int, touchFraction: Float): Float {
+        val maxIdx = getStreamMaxIndex(streamType)
+        val minIdx = getStreamMinIndex(streamType)
+        val range = maxIdx - minIdx
+        if (range <= 0) return 0f
+
+        val fineMax = maxIdx * FINE_MULTIPLIER
+        val clamped = touchFraction.coerceIn(0f, 1f)
+        val targetFine = (clamped * fineMax).roundToInt().coerceIn(0, fineMax)
+        cachedFineVolumeByStream[streamType] = targetFine
+
+        if (streamType == AudioManager.STREAM_VOICE_CALL) {
+            val effMin = getEffectiveMinIndex(streamType)
+            val minFine = effMin * FINE_MULTIPLIER
+            val constrainedFine = targetFine.coerceIn(minFine, fineMax)
+            cachedFineVolumeByStream[streamType] = constrainedFine
+
+            val targetCoarse = (constrainedFine.toFloat() / FINE_MULTIPLIER.toFloat())
+                .coerceIn(effMin.toFloat(), maxIdx.toFloat())
+            
+            runCatching {
+                audioManager.setStreamVolume(streamType, targetCoarse.roundToInt().coerceIn(effMin, maxIdx), 0)
+            }
+            if (setFineVolume != null) {
+                runCatching { setFineVolume?.invoke(audioManager, streamType, constrainedFine, 0) }
+            }
+            return (constrainedFine.toFloat() / fineMax.toFloat()).coerceIn(0f, 1f)
+        }
+
+        if (targetFine <= 0) {
+            if (setFineVolume != null && streamType == AudioManager.STREAM_MUSIC) {
+                runCatching { setFineVolume?.invoke(audioManager, streamType, 0, 0) }
+            }
+            runCatching { audioManager.setStreamVolume(streamType, minIdx, 0) }
+            return 0f
+        }
+
+        val flags = if (streamType == AudioManager.STREAM_RING) AudioManager.FLAG_ALLOW_RINGER_MODES else 0
+        unmuteStreamIfNeeded(streamType, flags)
+
+        val targetCoarse = (targetFine.toFloat() / FINE_MULTIPLIER.toFloat())
+            .roundToInt()
+            .coerceIn(minIdx, maxIdx)
+
+        if (setFineVolume != null && streamType == AudioManager.STREAM_MUSIC) {
+            if (targetFine < FINE_MULTIPLIER &&
+                runCatching { audioManager.getStreamVolume(streamType) }.getOrDefault(0) == minIdx
+            ) {
+                runCatching { audioManager.setStreamVolume(streamType, minIdx + 1, 0) }
+            }
+            runCatching { setFineVolume?.invoke(audioManager, streamType, targetFine, 0) }
+        } else {
+            runCatching { audioManager.setStreamVolume(streamType, targetCoarse, 0) }
+        }
+
+        return (targetFine.toFloat() / fineMax.toFloat()).coerceIn(0f, 1f)
+    }
+
+    fun onScrubReleased(streamType: Int) {
+        val fine = cachedFineVolumeByStream[streamType] ?: return
+        val maxIdx = getStreamMaxIndex(streamType)
+        val minIdx = getStreamMinIndex(streamType)
+        val effMin = getEffectiveMinIndex(streamType)
+        val targetCoarse = (fine.toFloat() / FINE_MULTIPLIER.toFloat()).roundToInt().coerceIn(effMin, maxIdx)
+        runCatching { audioManager.setStreamVolume(streamType, targetCoarse, 0) }
+        if (setFineVolume != null && streamType == AudioManager.STREAM_MUSIC) {
+            runCatching { setFineVolume?.invoke(audioManager, streamType, fine, 0) }
+        }
+    }
+
+    private fun unmuteStreamIfNeeded(streamType: Int, flags: Int = 0) {
+        if (streamType == AudioManager.STREAM_RING || streamType == AudioManager.STREAM_NOTIFICATION) {
+            runCatching {
+                if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL) {
+                    audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+                }
+            }
+        }
+        runCatching {
+            if (audioManager.isStreamMute(streamType)) {
+                audioManager.adjustStreamVolume(streamType, AudioManager.ADJUST_UNMUTE, flags)
+            }
         }
     }
 }

@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
         settingsRepository = SettingsRepository.getInstance(this)
         volumeController = VolumeController(this)
         ShizukuManager.init(this)
+        com.nudge.edge.service.NudgeKeepAliveService.start(this)
 
         setContent {
             val context = LocalContext.current

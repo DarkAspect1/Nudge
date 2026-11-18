@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import com.nudge.edge.model.PersistentNudgeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nudge.edge.model.EdgeOrientationMapper
@@ -544,6 +545,30 @@ fun DevicePreviewCanvas(
                             }
                         }
 
+                    }
+
+                    if (previewTarget == PreviewTarget.NUDGE_MENU || previewTarget == PreviewTarget.OPEN_APPS_MENU) {
+                        val scale = size.width / realScreenWidthDp
+                        val openAppNudge = settings.persistentNudges.firstOrNull { it.action == PersistentNudgeAction.OPEN_APP }
+                        val isApps = previewTarget == PreviewTarget.OPEN_APPS_MENU
+                        val widthDp = if (isApps) (openAppNudge?.menuWidthDp ?: settings.nudgeMenuWidthDp) else settings.nudgeMenuWidthDp
+                        val heightDp = if (isApps) (openAppNudge?.menuHeightDp ?: settings.nudgeMenuHeightDp) else settings.nudgeMenuHeightDp
+                        val yFrac = if (isApps) (openAppNudge?.menuYFraction ?: settings.nudgeMenuYFraction) else settings.nudgeMenuYFraction
+                        val targetEdge = if (isApps) (openAppNudge?.edge ?: settings.nudgeMenuEdge) else settings.nudgeMenuEdge
+                        val menuW = (widthDp * scale).coerceAtLeast(8f)
+                        val menuH = (heightDp * scale).coerceAtLeast(24f)
+                        val menuY = (size.height * yFrac) - (menuH * 0.5f)
+                        val menuLeft = if (targetEdge == ScreenEdge.LEFT) 0f else size.width - menuW
+                        val menuPath = Path()
+                        com.nudge.edge.ui.components.buildOrganicBezelPath(
+                            path = menuPath,
+                            width = menuW,
+                            height = menuH,
+                            screenEdge = targetEdge
+                        )
+                        translate(left = menuLeft, top = menuY.coerceIn(0f, size.height - menuH)) {
+                            drawPath(path = menuPath, color = Color.Black.copy(alpha = 0.85f))
+                        }
                     }
 
                     val cameraOffset = when {

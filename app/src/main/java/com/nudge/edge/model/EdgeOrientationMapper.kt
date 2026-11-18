@@ -87,6 +87,87 @@ object EdgeOrientationMapper {
         return (centerPx - elementSpanPx / 2).coerceIn(0, maxOffset)
     }
 
+    fun mapLandscapeEdgeToPhysicalPortrait(landscapeEdge: ScreenEdge, rotation: Int): ScreenEdge {
+        if (rotation == Surface.ROTATION_180) {
+            return when (landscapeEdge) {
+                ScreenEdge.RIGHT -> ScreenEdge.TOP
+                ScreenEdge.LEFT -> ScreenEdge.BOTTOM
+                ScreenEdge.TOP -> ScreenEdge.LEFT
+                ScreenEdge.BOTTOM -> ScreenEdge.RIGHT
+            }
+        }
+        return when (landscapeEdge) {
+            ScreenEdge.RIGHT -> ScreenEdge.BOTTOM
+            ScreenEdge.LEFT -> ScreenEdge.TOP
+            ScreenEdge.TOP -> ScreenEdge.RIGHT
+            ScreenEdge.BOTTOM -> ScreenEdge.LEFT
+        }
+    }
+
+    fun mapLandscapeOffsetToPhysicalPortrait(
+        landscapeEdge: ScreenEdge,
+        offsetPercent: Float,
+        rotation: Int
+    ): Float {
+        val physicalEdge = mapLandscapeEdgeToPhysicalPortrait(landscapeEdge, rotation)
+        val isHorizontal = physicalEdge == ScreenEdge.TOP || physicalEdge == ScreenEdge.BOTTOM
+        val invertForRotation = rotation == Surface.ROTATION_180
+        return if (isHorizontal xor invertForRotation) {
+            (1f - offsetPercent).coerceIn(0f, 1f)
+        } else {
+            offsetPercent.coerceIn(0f, 1f)
+        }
+    }
+
+    fun resolveActiveHudScreenEdge(
+        settings: NudgeSettings,
+        rotation: Int,
+        previewLandscape: Boolean = false
+    ): ScreenEdge {
+        return if (isLandscapeRotation(rotation)) {
+            settings.landscapeHudEdgeSide
+        } else if (previewLandscape) {
+            mapLandscapeEdgeToPhysicalPortrait(settings.landscapeHudEdgeSide, rotation)
+        } else {
+            resolvePhysicalEdge(settings.effectiveHudEdgeSide, rotation)
+        }
+    }
+
+    fun resolveActiveHudAxisFraction(
+        settings: NudgeSettings,
+        rotation: Int,
+        previewLandscape: Boolean = false
+    ): Float {
+        return if (isLandscapeRotation(rotation)) {
+            settings.landscapeHudYFraction.coerceIn(0f, 1f)
+        } else if (previewLandscape) {
+            mapLandscapeOffsetToPhysicalPortrait(
+                settings.landscapeHudEdgeSide,
+                settings.landscapeHudYFraction,
+                rotation
+            )
+        } else {
+            resolveAxisFraction(settings.hudYFraction, rotation)
+        }
+    }
+
+    fun computeActiveHudTopOrLeftPx(
+        settings: NudgeSettings,
+        rotation: Int,
+        axisLengthPx: Float,
+        elementSpanPx: Int,
+        previewLandscape: Boolean = false
+    ): Int {
+        val fraction = resolveActiveHudAxisFraction(settings, rotation, previewLandscape)
+        val centerPx = (fraction * axisLengthPx).coerceIn(0f, axisLengthPx).roundToInt()
+        val maxOffset = (axisLengthPx.roundToInt() - elementSpanPx).coerceAtLeast(0)
+        return (centerPx - elementSpanPx / 2).coerceIn(0, maxOffset)
+    }
+
+    fun isLandscapeLayout(rotation: Int, previewLandscape: Boolean): Boolean {
+        return isLandscapeRotation(rotation) || previewLandscape
+    }
+
     fun shouldShowEdgePop(isLandscape: Boolean, settings: NudgeSettings): Boolean {
         return !isLandscape || settings.enableEdgePopInLandscape
     }

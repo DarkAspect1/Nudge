@@ -221,7 +221,7 @@ object NudgeIcons {
             name = "Audio & Alerts",
             icons = listOf(
                 IconEntry("Notifications", "Bell", Icons.Rounded.Notifications),
-                IconEntry("NotificationsOff", "Slashed Bell", SlashedBell),
+                IconEntry("NotificationsOff", "Slashed Bell", Icons.Rounded.NotificationsOff),
                 IconEntry("Vibration", "Vibration", Icons.Rounded.Vibration),
                 IconEntry("VolumeUp", "Volume Up", Icons.AutoMirrored.Rounded.VolumeUp),
                 IconEntry("VolumeOff", "Volume Off", Icons.AutoMirrored.Rounded.VolumeOff),
