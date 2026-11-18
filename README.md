@@ -25,7 +25,7 @@ The app shows edge pops when you press the volume or power buttons, volume slide
   
 - **Both panels are triggered using side buttons** with up to 7 different combinations (custom buttons included for devices that has an additional button). When the panels are open, you can switch between modes using volume buttons or gesture swiping!
 
-- **New volume system** that reads your phone volume steps, multiplies it by 10 and here you go with 150, 250, 300, or more steps.. (pretty easy right? i got cooked implementing this)
+- **New volume system** that reads your phone volume steps, multiplies it by 10 and here you go with 150, 250, 300, or more steps..
 - **Individual app volume is here!** show it alongside volume slider or only in audio mixer **Must note that it uses Shizuku**
 - **Volume Counter:** Show volume count on your volume slider, applies to individual app volume slider too.
 - **Shizuku Implementation:** Grant all permissions with a single click, manage cloaked apps that the app hides its accessibility from (eg. banking apps), watchdog to keep the app alive, watchdog to keep permissions always active (both watchdogs are mainly for hardened systems, but anyone can use them)
