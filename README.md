@@ -38,7 +38,7 @@ The app shows edge pops when you press the volume or power buttons, volume slide
 - **Individual app volume is here!** show it alongside volume slider or only in audio mixer **Must note that it uses Shizuku**
 - **Volume Counter:** Show volume count on your volume slider, applies to individual app volume slider too.
 - **Shizuku Implementation:** Grant all permissions with a single click, manage cloaked apps that the app hides its accessibility from (eg. banking apps), watchdog to keep the app alive, watchdog to keep permissions always active (both watchdogs are mainly for hardened systems, but anyone can use them). **Use shizuku for DND** for systems that has a problem that it doesnt cycle between the DND on/off properly & **Use shizuku for hold power button** if you dont want to set Nudge as your assistant
-- **Added all panels activity:** all panels now are accessible from activity launcher or any similar feature in different apps.
+- **All panels activity:** all panels are accessible from activity launcher or any similar feature in different apps.
 - **Tapping anywhere on the screen dismisses the panels**
 - **Want haptics too? there's a whole section for that part:** every panel and modes cycling has a separate switch
   
