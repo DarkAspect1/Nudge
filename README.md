@@ -29,14 +29,10 @@ The app shows edge pops when you press the volume or power buttons, volume slide
 - **Both panels are triggered using side buttons** with up to 7 different combinations (custom buttons included for devices that has an additional button). When the panels are open, you can switch between modes using volume buttons or gesture swiping!
 
 - **Nudge Actions:**
-**Persistant side panels that can be open by swiping/tapping:** Run actions like screenshots, flashlight, camera, and more
-
-**Up to 10 nudges**
-
+**Persistant side panels that can be open by swiping/tapping:** Run actions like screenshots, flashlight, camera, and more.
+**Up to 10 nudges.**
 **Many actions to choose from including:**
-
 **Nudge Menu:** a customizable menu that has all nudge options in a single place by cycling between them
-
 **Open Apps Menu:** choose your favourite apps, re-order them as you like, and cycle between them
 
 - **Individual app volume is here!** show it alongside volume slider or only in audio mixer **Must note that it uses Shizuku**
