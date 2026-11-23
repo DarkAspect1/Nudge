@@ -65,6 +65,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -712,6 +713,24 @@ fun SliderHudTab(
                             )
                         }
 
+                        AnimatedVisibility(
+                            visible = settings.enableThinVolumeHud,
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut() + shrinkVertically()
+                        ) {
+                            Column(modifier = Modifier.padding(top = 8.dp)) {
+                                InlineStepperSlider(
+                                    title = "Edge Inset",
+                                    valueLabel = "${settings.thinHudEdgeInsetDp.roundToInt()} dp",
+                                    value = settings.thinHudEdgeInsetDp,
+                                    valueRange = 0f..48f,
+                                    onValueChange = { repository.setThinHudEdgeInsetDp(it.roundToInt().toFloat()) },
+                                    onStepDown = { repository.setThinHudEdgeInsetDp(settings.thinHudEdgeInsetDp - 1f) },
+                                    onStepUp = { repository.setThinHudEdgeInsetDp(settings.thinHudEdgeInsetDp + 1f) }
+                                )
+                            }
+                        }
+
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                         Row(
@@ -793,8 +812,8 @@ fun SliderHudTab(
                                     Surface(
                                         onClick = { repository.setPerAppVolumeDisplayMode("ALONGSIDE_SLIDER") },
                                         shape = CircleShape,
-                                        color = if (isAlongside) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                        contentColor = if (isAlongside) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                        color = if (isAlongside) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        contentColor = if (isAlongside) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.weight(1f).height(44.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp)) {
@@ -811,8 +830,8 @@ fun SliderHudTab(
                                     Surface(
                                         onClick = { repository.setPerAppVolumeDisplayMode("MIXER_ONLY") },
                                         shape = CircleShape,
-                                        color = if (!isAlongside) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                        contentColor = if (!isAlongside) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                        color = if (!isAlongside) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        contentColor = if (!isAlongside) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.weight(1f).height(44.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp)) {
@@ -1533,8 +1552,8 @@ fun SystemTab(
                                     Surface(
                                         onClick = { repository.setUpdateCheckFrequency(freqKey) },
                                         shape = CircleShape,
-                                        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                        contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.weight(1f).height(40.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize().padding(horizontal = 2.dp)) {
@@ -2786,14 +2805,14 @@ private fun SelectablePillButton(
         onClick = onClick,
         shape = RoundedCornerShape(50),
         color = if (selected) {
-            MaterialTheme.colorScheme.primaryContainer
+            MaterialTheme.colorScheme.primary
         } else {
             MaterialTheme.colorScheme.surfaceContainerHigh
         },
         contentColor = if (selected) {
-            MaterialTheme.colorScheme.onPrimaryContainer
+            MaterialTheme.colorScheme.onPrimary
         } else {
-            MaterialTheme.colorScheme.onSurface
+            MaterialTheme.colorScheme.onSurfaceVariant
         },
         modifier = modifier
     ) {
@@ -2867,7 +2886,7 @@ private fun TriggerOptionRow(
         onClick = onClick,
         shape = CircleShape,
         color = if (selected) {
-            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
+            MaterialTheme.colorScheme.primary
         } else {
             MaterialTheme.colorScheme.surfaceContainerLow
         },
@@ -2881,7 +2900,11 @@ private fun TriggerOptionRow(
         ) {
             RadioButton(
                 selected = selected,
-                onClick = onClick
+                onClick = onClick,
+                colors = RadioButtonDefaults.colors(
+                    selectedColor = MaterialTheme.colorScheme.onPrimary,
+                    unselectedColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             )
             Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -2889,6 +2912,7 @@ private fun TriggerOptionRow(
                     text = title,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis
@@ -2896,7 +2920,7 @@ private fun TriggerOptionRow(
                 Text(
                     text = description,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

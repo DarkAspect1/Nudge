@@ -185,9 +185,6 @@ class NudgeAccessibilityService : AccessibilityService() {
     )
     private val persistentNudgeCatchers = mutableListOf<PersistentNudgeCatcherHolder>()
 
-    @Volatile
-    private var previousForegroundPackage = ""
-
     private val muteAllObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) {
             checkMuteAllSoundsState()
@@ -1130,21 +1127,12 @@ class NudgeAccessibilityService : AccessibilityService() {
             val className = event.className?.toString()
             if (!pkg.isNullOrBlank() && pkg != packageName) {
                 if (className != "android.widget.Toast") {
-                    if (!isExcludedFromAppSwitch(pkg)) {
-                        if (pkg != currentForegroundPackage) {
-                            previousForegroundPackage = currentForegroundPackage
-                            currentForegroundPackage = pkg
-                        }
-                        if (::appVolumeController.isInitialized) {
-                            appVolumeController.currentForegroundPackage = pkg
-                            appVolumeController.refreshActiveApps()
-                        }
-                    } else if (pkg != "com.android.systemui" && pkg != "android" && !pkg.contains("systemui") && !pkg.contains("inputmethod")) {
+                    if (pkg != currentForegroundPackage) {
                         currentForegroundPackage = pkg
-                        if (::appVolumeController.isInitialized) {
-                            appVolumeController.currentForegroundPackage = pkg
-                            appVolumeController.refreshActiveApps()
-                        }
+                    }
+                    if (::appVolumeController.isInitialized) {
+                        appVolumeController.currentForegroundPackage = pkg
+                        appVolumeController.refreshActiveApps()
                     }
                     val settings = effectiveSettingsState.value
                     val isCloaked = settings.cloakedPackages.contains(pkg)
@@ -1532,9 +1520,9 @@ class NudgeAccessibilityService : AccessibilityService() {
 
                 volumeHoldThinJob?.cancel()
                 volumeHoldThinJob = serviceScope.launch {
-                    delay(500L)
+                    delay(400L)
                     val latest = effectiveSettingsState.value
-                    if ((volUpIsDown || volDownIsDown) && latest.enableThinVolumeHud && hudActive.value) {
+                    if ((volUpIsDown || volDownIsDown || keyHeldDown) && latest.enableThinVolumeHud) {
                         isHudThin.value = true
                     }
                 }
@@ -2714,6 +2702,11 @@ class NudgeAccessibilityService : AccessibilityService() {
                 val showSystemUi = EdgeOrientationMapper.shouldShowSystemVolumePanel(isLandscape, latest)
 
                 val now = SystemClock.uptimeMillis()
+                if ((now - downTimeMs) >= 400L && latest.enableThinVolumeHud && !isHudThin.value) {
+                    withContext(Dispatchers.Main) {
+                        isHudThin.value = true
+                    }
+                }
                 val holdDurationSec = ((now - downTimeMs - 170L).coerceAtLeast(0L)) / 1000f
                 val stepFactor = 1.0f
                 val velocityPerSec = when {
@@ -2863,6 +2856,17 @@ class NudgeAccessibilityService : AccessibilityService() {
                 ringerModeLabelState.value = null
             }
         }
+    }
+
+    private fun dismissVolumeHud() {
+        hudHideJob?.cancel()
+        hudActive.value = false
+        isHudThin.value = false
+        volumePressCount = 0
+        isHoldingVolUpAtMax.value = false
+        isHoldingVolDownAtMin.value = false
+        ringerModeLabelDismissJob?.cancel()
+        ringerModeLabelState.value = null
     }
 
     private fun setupOverlayWindows() {
@@ -3213,6 +3217,8 @@ class NudgeAccessibilityService : AccessibilityService() {
                                     isHudThin.value = false
                                     volumePressCount = 0
                                 },
+                                thinHudEdgeInsetDp = latestSettings.thinHudEdgeInsetDp,
+                                onDismiss = { dismissVolumeHud() },
                                 pillTransparency = latestSettings.volumeSliderPillTransparency,
                                 volumeSliderBlur = latestSettings.volumeSliderBlur,
                                 pillBlurDp = latestSettings.volumeSliderPillBlurDp,
@@ -3266,6 +3272,8 @@ class NudgeAccessibilityService : AccessibilityService() {
                                 isHudThin.value = false
                                 volumePressCount = 0
                             },
+                            thinHudEdgeInsetDp = latestSettings.thinHudEdgeInsetDp,
+                            onDismiss = { dismissVolumeHud() },
                             pillTransparency = latestSettings.volumeSliderPillTransparency,
                             volumeSliderBlur = latestSettings.volumeSliderBlur,
                             pillBlurDp = latestSettings.volumeSliderPillBlurDp,
@@ -3352,6 +3360,8 @@ class NudgeAccessibilityService : AccessibilityService() {
                                     isHudThin.value = false
                                     volumePressCount = 0
                                 },
+                                thinHudEdgeInsetDp = latestSettings.thinHudEdgeInsetDp,
+                                onDismiss = { dismissVolumeHud() },
                                 pillTransparency = latestSettings.volumeSliderPillTransparency,
                                 volumeSliderBlur = latestSettings.volumeSliderBlur,
                                 pillBlurDp = latestSettings.volumeSliderPillBlurDp,
@@ -3426,6 +3436,8 @@ class NudgeAccessibilityService : AccessibilityService() {
                                     isHudThin.value = false
                                     volumePressCount = 0
                                 },
+                                thinHudEdgeInsetDp = latestSettings.thinHudEdgeInsetDp,
+                                onDismiss = { dismissVolumeHud() },
                                 pillTransparency = latestSettings.volumeSliderPillTransparency,
                                 volumeSliderBlur = latestSettings.volumeSliderBlur,
                                 pillBlurDp = latestSettings.volumeSliderPillBlurDp,
@@ -3539,6 +3551,8 @@ class NudgeAccessibilityService : AccessibilityService() {
                                     isHudThin.value = false
                                     volumePressCount = 0
                                 },
+                                thinHudEdgeInsetDp = latestSettings.thinHudEdgeInsetDp,
+                                onDismiss = { dismissVolumeHud() },
                                 pillTransparency = latestSettings.volumeSliderPillTransparency,
                                 volumeSliderBlur = latestSettings.volumeSliderBlur,
                                 pillBlurDp = latestSettings.volumeSliderPillBlurDp,
@@ -3611,6 +3625,14 @@ class NudgeAccessibilityService : AccessibilityService() {
                 }
             }
             sliderView.visibility = View.GONE
+            sliderView.setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_OUTSIDE && hudActive.value) {
+                    dismissVolumeHud()
+                    true
+                } else {
+                    false
+                }
+            }
             hudParams = sliderParams
             hudView = sliderView
             if (!OverlayBlurController.isSamsungBackendActive() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -3620,6 +3642,14 @@ class NudgeAccessibilityService : AccessibilityService() {
                             setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
                             attributes = sliderParams
                             setBackgroundDrawableResource(android.R.color.transparent)
+                            decorView.setOnTouchListener { _, event ->
+                                if (event.action == MotionEvent.ACTION_OUTSIDE && hudActive.value) {
+                                    dismissVolumeHud()
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
                         }
                         setContentView(sliderView)
                     }
@@ -3807,6 +3837,14 @@ class NudgeAccessibilityService : AccessibilityService() {
                 modifier = Modifier.fillMaxSize()
             )
         }
+        composeView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE && dndActive.value) {
+                dismissDndOverlay()
+                true
+            } else {
+                false
+            }
+        }
         composeView.visibility = View.GONE
         dndParams = params
         dndView = composeView
@@ -3853,6 +3891,14 @@ class NudgeAccessibilityService : AccessibilityService() {
                 onDismiss = { dismissActionsPanel() },
                 modifier = Modifier.fillMaxSize()
             )
+        }
+        composeView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE && modesActive.value) {
+                dismissActionsPanel()
+                true
+            } else {
+                false
+            }
         }
         composeView.visibility = View.GONE
         modesParams = params
@@ -4478,7 +4524,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         hasAlongsideAppOverride: Boolean? = null
     ): WindowLayoutSpec {
         val isVertical = screenEdge == ScreenEdge.LEFT || screenEdge == ScreenEdge.RIGHT
-        val insetDp = settings.hudEdgeInsetDp
+        val insetDp = maxOf(settings.hudEdgeInsetDp, settings.thinHudEdgeInsetDp)
         val hasAlongsideApp = hasAlongsideAppOverride ?: (settings.isPerAppVolumeEnabled &&
             settings.perAppVolumeDisplayMode == "ALONGSIDE_SLIDER" &&
             ::appVolumeController.isInitialized &&
@@ -4511,7 +4557,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         val flags = if (touchable) {
-            baseOverlayFlags()
+            baseOverlayFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
         } else {
             baseOverlayFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         }
@@ -4554,7 +4600,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         val flags = if (touchable) {
-            baseOverlayFlags()
+            baseOverlayFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
         } else {
             baseOverlayFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         }
@@ -4598,7 +4644,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         val flags = if (touchable) {
-            baseOverlayFlags()
+            baseOverlayFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
         } else {
             baseOverlayFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         }
@@ -4711,91 +4757,6 @@ class NudgeAccessibilityService : AccessibilityService() {
             edgePopView?.visibility = View.GONE
             persistentNudgeCatchers.forEach { it.view.visibility = View.GONE }
         }
-    }
-
-    private fun isExcludedFromAppSwitch(pkg: String): Boolean {
-        if (pkg.isBlank() || pkg == packageName || pkg == "android" || pkg == "com.android.systemui") return true
-        val lower = pkg.lowercase()
-        if (lower.contains("systemui") || lower.contains("honeyboard") || lower.contains("keyboard") || lower.contains("inputmethod")) return true
-        if (pkg == "com.google.android.googlequicksearchbox" || pkg == "com.google.android.apps.bard" || pkg == "com.google.android.apps.googleassistant") return true
-        if (pkg.startsWith("com.samsung.android.bixby") || pkg == "com.samsung.android.sidegesturepad") return true
-        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        val imePackages = imm?.enabledInputMethodList?.map { it.packageName } ?: emptyList()
-        if (imePackages.contains(pkg)) return true
-        if (isLauncherPackage(pkg)) return true
-        if (packageManager.getLaunchIntentForPackage(pkg) == null) return true
-        return false
-    }
-
-    private fun isLauncherPackage(pkg: String): Boolean {
-        if (pkg.isBlank()) return false
-        val lower = pkg.lowercase()
-        if (lower.contains("launcher") || lower.contains("home") || lower.contains("trebuchet") || lower.contains("quickstep")) {
-            return true
-        }
-        return runCatching {
-            val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-            val resolveInfos = packageManager.queryIntentActivities(intent, 0)
-            val isExplicitHome = resolveInfos.any { it.activityInfo?.packageName == pkg }
-            if (isExplicitHome) return true
-            val defaultHome = packageManager.resolveActivity(intent, 0)?.activityInfo?.packageName
-            defaultHome == pkg
-        }.getOrDefault(false)
-    }
-
-    private fun switchLastApp() {
-        serviceScope.launch(Dispatchers.Main) {
-            var switched = false
-            val targetPkg = previousForegroundPackage
-            if (targetPkg.isNotBlank() && targetPkg != currentForegroundPackage && !isExcludedFromAppSwitch(targetPkg)) {
-                val launchIntent = packageManager.getLaunchIntentForPackage(targetPkg)
-                if (launchIntent != null) {
-                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-                    switched = runCatching {
-                        startActivity(launchIntent)
-                        true
-                    }.getOrDefault(false)
-                }
-            }
-            if (!switched && ShizukuManager.hasShizukuPermission()) {
-                switched = withContext(Dispatchers.IO) {
-                    switchLastAppViaShizuku()
-                }
-            }
-            if (!switched) {
-                val performed = performGlobalAction(GLOBAL_ACTION_RECENTS)
-                if (performed) {
-                    delay(120L)
-                    performGlobalAction(GLOBAL_ACTION_RECENTS)
-                    switched = true
-                }
-            }
-            if (!switched) {
-                Toast.makeText(this@NudgeAccessibilityService, "No previous app", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun switchLastAppViaShizuku(): Boolean {
-        val out = ShizukuManager.runCommand("dumpsys activity recents")
-        if (out.isBlank()) return false
-        val taskRegex = Regex("""Task\{([a-f0-9]+)\s+#(\d+)\s+[^}]*(?:A=|I=|cmp=)([a-zA-Z0-9_.]+)/""")
-        val matches = taskRegex.findAll(out).toList()
-        for (m in matches) {
-            val taskId = m.groupValues[2]
-            val pkg = m.groupValues[3]
-            if (pkg != packageName &&
-                !isExcludedFromAppSwitch(pkg) &&
-                pkg != currentForegroundPackage &&
-                packageManager.getLaunchIntentForPackage(pkg) != null
-            ) {
-                val res = ShizukuManager.runCommand("cmd activity task focus $taskId")
-                if (!res.contains("Error") && !res.contains("Exception")) {
-                    return true
-                }
-            }
-        }
-        return false
     }
 
     private fun toggleAutoRotate() {
@@ -5164,31 +5125,41 @@ class NudgeAccessibilityService : AccessibilityService() {
                     startActivity(intent)
                 }
             }
-            PersistentNudgeAction.APP_SWITCH -> {
-                switchLastApp()
-            }
             PersistentNudgeAction.OPEN_APP -> {
-                if (targetPackage.isNotBlank()) {
-                    runCatching {
-                        val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
-                        if (launchIntent != null) {
-                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-                            startActivity(launchIntent)
-                        }
-                    }
-                } else {
-                    val appsToShow = if (selectedApps.isNotEmpty()) {
-                        selectedApps
-                    } else {
-                        currentSettings.nudgeMenuApps
-                    }
-                    nudgeMenuOnlyApps.value = appsToShow
+                if (selectedApps.size > 1) {
+                    nudgeMenuOnlyApps.value = selectedApps
                     showNudgeMenu(
                         edge = edge,
                         overrideWidthDp = customNudge?.menuWidthDp,
                         overrideHeightDp = customNudge?.menuHeightDp,
                         overrideYFraction = customNudge?.menuYFraction
                     )
+                } else {
+                    val pkgToLaunch = targetPackage.ifBlank {
+                        selectedApps.firstOrNull()?.packageName.orEmpty()
+                    }
+                    if (pkgToLaunch.isNotBlank()) {
+                        runCatching {
+                            val launchIntent = packageManager.getLaunchIntentForPackage(pkgToLaunch)
+                            if (launchIntent != null) {
+                                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+                                startActivity(launchIntent)
+                            }
+                        }
+                    } else {
+                        val appsToShow = if (selectedApps.isNotEmpty()) {
+                            selectedApps
+                        } else {
+                            currentSettings.nudgeMenuApps
+                        }
+                        nudgeMenuOnlyApps.value = appsToShow
+                        showNudgeMenu(
+                            edge = edge,
+                            overrideWidthDp = customNudge?.menuWidthDp,
+                            overrideHeightDp = customNudge?.menuHeightDp,
+                            overrideYFraction = customNudge?.menuYFraction
+                        )
+                    }
                 }
             }
             PersistentNudgeAction.SHOW_SYSTEM_VOLUME -> {

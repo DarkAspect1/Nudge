@@ -260,6 +260,9 @@ fun ActionsPanelOverlay(
                                     val down = awaitFirstDown(requireUnconsumed = false)
                                     isFingerTouchingPanel = true
                                     onPauseAutoHideTimer()
+                                    val touchSlopPx = with(density) { 8.dp.toPx() }
+                                    var totalDelta = 0f
+                                    var isDrag = false
                                     try {
                                         var lastPos = down.position
                                         while (true) {
@@ -268,7 +271,11 @@ fun ActionsPanelOverlay(
                                             if (!change.pressed) break
                                             val delta = change.position.y - lastPos.y
                                             lastPos = change.position
-                                            if (delta != 0f) {
+                                            totalDelta += delta
+                                            if (abs(totalDelta) > touchSlopPx) {
+                                                isDrag = true
+                                            }
+                                            if (isDrag && delta != 0f) {
                                                 change.consume()
                                                 launch {
                                                     val stepDelta = delta / iconSpacingPx
@@ -277,22 +284,52 @@ fun ActionsPanelOverlay(
                                             }
                                         }
                                     } finally {
-                                        val targetIndex = wheelScrollPosition.value.roundToInt()
-                                        val actualIdx = Math.floorMod(targetIndex, effectiveModes.size)
-                                        if (isVisible && isFingerTouchingPanel) {
-                                            onModeSelected(effectiveModes[actualIdx])
-                                        }
-                                        launch {
-                                            try {
-                                                wheelScrollPosition.animateTo(
-                                                    targetValue = targetIndex.toFloat(),
-                                                    animationSpec = spring(
-                                                        dampingRatio = Spring.DampingRatioNoBouncy,
-                                                        stiffness = Spring.StiffnessMediumLow
+                                        if (isDrag) {
+                                            val targetIndex = wheelScrollPosition.value.roundToInt()
+                                            val actualIdx = Math.floorMod(targetIndex, effectiveModes.size)
+                                            if (isVisible && isFingerTouchingPanel) {
+                                                onModeSelected(effectiveModes[actualIdx])
+                                            }
+                                            launch {
+                                                try {
+                                                    wheelScrollPosition.animateTo(
+                                                        targetValue = targetIndex.toFloat(),
+                                                        animationSpec = spring(
+                                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                                            stiffness = Spring.StiffnessMediumLow
+                                                        )
                                                     )
-                                                )
-                                            } finally {
-                                                isFingerTouchingPanel = false
+                                                } finally {
+                                                    isFingerTouchingPanel = false
+                                                }
+                                            }
+                                        } else {
+                                            isFingerTouchingPanel = false
+                                            val centerAxis = with(density) { heightDp.dp.toPx() } / 2f
+                                            val currentScroll = wheelScrollPosition.value
+                                            val tappedVirtualIndex = (currentScroll + ((down.position.y - centerAxis) / iconSpacingPx)).roundToInt()
+                                            val expectedIconCoord = centerAxis + (tappedVirtualIndex - currentScroll) * iconSpacingPx
+                                            val iconRadiusPx = with(density) { (effectiveIconSizeDp / 2f + 8.dp).toPx() }
+                                            val hitIcon = abs(down.position.y - expectedIconCoord) <= iconRadiusPx
+                                            if (hitIcon && isVisible) {
+                                                val actualIdx = Math.floorMod(tappedVirtualIndex, effectiveModes.size)
+                                                val tappedMode = effectiveModes[actualIdx]
+                                                launch {
+                                                    try {
+                                                        wheelScrollPosition.animateTo(
+                                                            targetValue = tappedVirtualIndex.toFloat(),
+                                                            animationSpec = spring(
+                                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                                                stiffness = Spring.StiffnessLow
+                                                            )
+                                                        )
+                                                        onModeSelected(tappedMode)
+                                                    } finally {
+                                                        isFingerTouchingPanel = false
+                                                    }
+                                                }
+                                            } else {
+                                                onDismiss()
                                             }
                                         }
                                     }
@@ -449,6 +486,9 @@ fun ActionsPanelOverlay(
                                     val down = awaitFirstDown(requireUnconsumed = false)
                                     isFingerTouchingPanel = true
                                     onPauseAutoHideTimer()
+                                    val touchSlopPx = with(density) { 8.dp.toPx() }
+                                    var totalDelta = 0f
+                                    var isDrag = false
                                     try {
                                         var lastPos = down.position
                                         while (true) {
@@ -457,7 +497,11 @@ fun ActionsPanelOverlay(
                                             if (!change.pressed) break
                                             val delta = change.position.x - lastPos.x
                                             lastPos = change.position
-                                            if (delta != 0f) {
+                                            totalDelta += delta
+                                            if (abs(totalDelta) > touchSlopPx) {
+                                                isDrag = true
+                                            }
+                                            if (isDrag && delta != 0f) {
                                                 change.consume()
                                                 launch {
                                                     val stepDelta = delta / iconSpacingPx
@@ -466,22 +510,52 @@ fun ActionsPanelOverlay(
                                             }
                                         }
                                     } finally {
-                                        val targetIndex = wheelScrollPosition.value.roundToInt()
-                                        val actualIdx = Math.floorMod(targetIndex, effectiveModes.size)
-                                        if (isVisible && isFingerTouchingPanel) {
-                                            onModeSelected(effectiveModes[actualIdx])
-                                        }
-                                        launch {
-                                            try {
-                                                wheelScrollPosition.animateTo(
-                                                    targetValue = targetIndex.toFloat(),
-                                                    animationSpec = spring(
-                                                        dampingRatio = Spring.DampingRatioNoBouncy,
-                                                        stiffness = Spring.StiffnessMediumLow
+                                        if (isDrag) {
+                                            val targetIndex = wheelScrollPosition.value.roundToInt()
+                                            val actualIdx = Math.floorMod(targetIndex, effectiveModes.size)
+                                            if (isVisible && isFingerTouchingPanel) {
+                                                onModeSelected(effectiveModes[actualIdx])
+                                            }
+                                            launch {
+                                                try {
+                                                    wheelScrollPosition.animateTo(
+                                                        targetValue = targetIndex.toFloat(),
+                                                        animationSpec = spring(
+                                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                                            stiffness = Spring.StiffnessMediumLow
+                                                        )
                                                     )
-                                                )
-                                            } finally {
-                                                isFingerTouchingPanel = false
+                                                } finally {
+                                                    isFingerTouchingPanel = false
+                                                }
+                                            }
+                                        } else {
+                                            isFingerTouchingPanel = false
+                                            val centerAxis = with(density) { widthDp.dp.toPx() } / 2f
+                                            val currentScroll = wheelScrollPosition.value
+                                            val tappedVirtualIndex = (currentScroll + ((down.position.x - centerAxis) / iconSpacingPx)).roundToInt()
+                                            val expectedIconCoord = centerAxis + (tappedVirtualIndex - currentScroll) * iconSpacingPx
+                                            val iconRadiusPx = with(density) { (effectiveIconSizeDp / 2f + 8.dp).toPx() }
+                                            val hitIcon = abs(down.position.x - expectedIconCoord) <= iconRadiusPx
+                                            if (hitIcon && isVisible) {
+                                                val actualIdx = Math.floorMod(tappedVirtualIndex, effectiveModes.size)
+                                                val tappedMode = effectiveModes[actualIdx]
+                                                launch {
+                                                    try {
+                                                        wheelScrollPosition.animateTo(
+                                                            targetValue = tappedVirtualIndex.toFloat(),
+                                                            animationSpec = spring(
+                                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                                                stiffness = Spring.StiffnessLow
+                                                             )
+                                                        )
+                                                        onModeSelected(tappedMode)
+                                                    } finally {
+                                                        isFingerTouchingPanel = false
+                                                    }
+                                                }
+                                            } else {
+                                                onDismiss()
                                             }
                                         }
                                     }

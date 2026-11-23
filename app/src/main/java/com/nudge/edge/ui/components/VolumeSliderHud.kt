@@ -495,10 +495,12 @@ fun VolumeSliderHud(
     pillBlurDp: Float = 0f,
     isMuteAllSounds: Boolean = false,
     isThin: Boolean = false,
+    thinHudEdgeInsetDp: Float = 6f,
     isHoldingVolUpAtMax: Boolean = false,
     isHoldingVolDownAtMin: Boolean = false,
     extraBezelDistancePx: Float = 0f,
     onUserInteraction: () -> Unit = {},
+    onDismiss: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
@@ -529,32 +531,38 @@ fun VolumeSliderHud(
         }
     }
 
-    val targetWidth = if (isThin) 7f else hudWidthDp
+    var lastActiveIsThin by remember { mutableStateOf(isThin) }
+    if (isVisible) {
+        lastActiveIsThin = isThin
+    }
+    val effectiveIsThin = if (isVisible) isThin else lastActiveIsThin
+
+    val targetWidth = if (effectiveIsThin) 7f else hudWidthDp
     val animatedWidthDp by animateFloatAsState(
         targetValue = targetWidth,
         animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f),
         label = "hudWidth"
     )
-    val effectiveFloating = floatingMode || isThin
+    val effectiveFloating = floatingMode || effectiveIsThin
     val floatProgress by animateFloatAsState(
         targetValue = if (effectiveFloating) 1f else 0f,
         animationSpec = spring(dampingRatio = 0.82f, stiffness = 480f),
         label = "hudFloatMode"
     )
-    val targetEdgeInset = if (isThin) 6f else (if (floatingMode) edgeInsetDp else 0f)
+    val targetEdgeInset = if (effectiveIsThin) thinHudEdgeInsetDp else edgeInsetDp
     val animatedInsetDp by animateFloatAsState(
         targetValue = targetEdgeInset.coerceAtLeast(0f),
         animationSpec = spring(dampingRatio = 0.84f, stiffness = 480f),
         label = "hudEdgeInset"
     )
-    val targetCornerRadius = if (isThin) animatedWidthDp * 0.5f else hudCornerRadiusDp
+    val targetCornerRadius = if (effectiveIsThin) animatedWidthDp * 0.5f else hudCornerRadiusDp
     val animatedCornerRadiusDp by animateFloatAsState(
         targetValue = targetCornerRadius,
         animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f),
         label = "hudCornerRadius"
     )
     val iconAlpha by animateFloatAsState(
-        targetValue = if (isThin) 0f else 1f,
+        targetValue = if (effectiveIsThin) 0f else 1f,
         animationSpec = tween(120),
         label = "hudIconAlpha"
     )
@@ -655,7 +663,9 @@ fun VolumeSliderHud(
     val cutoutThicknessDp = computeHudCutoutThicknessDp(hudWidthDp, animatedInsetDp)
     val outerSpanDp = computeHudOuterSpanDp(hudHeightDp, volumeSliderFluidityPercent)
     val drawnPillSpanDp = computeHudDrawnPillSpanDp(hudHeightDp)
-    val totalThicknessDp = computeHudCutoutThicknessDp(hudWidthDp, maxInsetDp)
+    val effectivePillWidthDp = if (effectiveIsThin) animatedWidthDp else hudWidthDp
+    val effectiveInsetDp = if (effectiveIsThin) animatedInsetDp else maxInsetDp
+    val totalThicknessDp = effectivePillWidthDp + (HUD_CUTOUT_BEZEL_PAD_DP + HUD_CUTOUT_INNER_PAD_DP) * (1f - floatProgress) + effectiveInsetDp
     val containerWidthDp = if (isVerticalEdge) totalThicknessDp else outerSpanDp
     val containerHeightDp = if (isVerticalEdge) outerSpanDp else totalThicknessDp
 
@@ -679,6 +689,7 @@ fun VolumeSliderHud(
     val currentIsMuteAllSounds by rememberUpdatedState(isMuteAllSounds)
     val currentCustomAppIcon by rememberUpdatedState(customAppIcon)
     val currentMinFraction by rememberUpdatedState(minFraction)
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
 
     LaunchedEffect(resetEpoch) {
         if (resetEpoch > 0) {
@@ -789,6 +800,14 @@ fun VolumeSliderHud(
                                 currentOnOpenMenu()
                             }
                         }
+                        val isOutsideTrack = if (vertical) {
+                            downY < pStart || downY > pEnd
+                        } else {
+                            downX < pStart || downX > pEnd
+                        }
+                        if (isOutsideTrack && !movedAlongTrack) {
+                            currentOnDismiss()
+                        }
                         change.consume()
                         break
                     }
@@ -839,10 +858,12 @@ fun VolumeSliderHud(
             val shiftYDp = (minStretchExtraDp - maxStretchExtraDp) * 0.5f
             val shiftXDp = (maxStretchExtraDp - minStretchExtraDp) * 0.5f
 
+            val pillWPx = with(density) { pillWDp.toPx() }
+            val pillSpanPx = with(density) { totalStretchedPillSpanDp.toPx() }
             val cornerRadiusPx = with(density) {
                 animatedCornerRadiusDp.dp.toPx().coerceIn(
                     0f,
-                    minOf(pillWDp.toPx(), totalStretchedPillSpanDp.toPx()) * 0.5f
+                    minOf(pillWPx, pillSpanPx) * 0.5f
                 )
             }
             val bezelPadDp = (HUD_CUTOUT_BEZEL_PAD_DP * (1f - floatProgress) + animatedInsetDp).coerceAtLeast(0f).dp
@@ -882,7 +903,9 @@ fun VolumeSliderHud(
                         view = view,
                         blurRadiusPx = blurRadiusPx,
                         cornerRadiusPx = cornerRadiusPx,
-                        isHudVisible = isVisible && effectiveSlideProgress > 0.01f
+                        isHudVisible = isVisible && effectiveSlideProgress > 0.01f,
+                        widthPx = if (isVerticalEdge) pillWPx else pillSpanPx,
+                        heightPx = if (isVerticalEdge) pillSpanPx else pillWPx
                     )
                 },
                 modifier = trackModifier

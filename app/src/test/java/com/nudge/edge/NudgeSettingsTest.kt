@@ -47,6 +47,7 @@ class NudgeSettingsTest {
         assertFalse(defaults.showSystemPanelWhenHudOff)
         assertFalse(defaults.floatingMode)
         assertEquals(0f, defaults.hudEdgeInsetDp, 0.001f)
+        assertEquals(6f, defaults.thinHudEdgeInsetDp, 0.001f)
         assertTrue(defaults.enableEdgePopInLandscape)
         assertTrue(defaults.enableSliderHudInLandscape)
         assertEquals(ScreenEdge.RIGHT, defaults.landscapeHudEdgeSide)

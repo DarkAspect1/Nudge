@@ -454,27 +454,53 @@ fun DndSilentBezelOverlay(
 
                                 val touchSlopPx = with(density) { 8.dp.toPx() }
                                 val isTap = kotlin.math.abs(totalDelta) < touchSlopPx
-                                val targetSlot = if (completedNaturally) {
-                                    if (isTap) {
-                                        if (down.position.y < centerCoord) 0 else 1
-                                    } else {
-                                        if (focusProgress.value < 0.5f) 0 else 1
+                                if (isTap) {
+                                    val hitSlot0 = kotlin.math.abs(down.position.y - slot0Coord) <= iconHalfBoxPx * 1.5f
+                                    val hitSlot1 = kotlin.math.abs(down.position.y - slot1Coord) <= iconHalfBoxPx * 1.5f
+                                    if (hitSlot0 && completedNaturally && currentIsVisible) {
+                                        currentOnSelectState(true)
+                                        coroutineScope.launch {
+                                            focusProgress.animateTo(
+                                                targetValue = 0f,
+                                                animationSpec = spring(
+                                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                                    stiffness = Spring.StiffnessMediumLow
+                                                )
+                                            )
+                                        }
+                                    } else if (hitSlot1 && completedNaturally && currentIsVisible) {
+                                        currentOnSelectState(false)
+                                        coroutineScope.launch {
+                                            focusProgress.animateTo(
+                                                targetValue = 1f,
+                                                animationSpec = spring(
+                                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                                    stiffness = Spring.StiffnessMediumLow
+                                                )
+                                            )
+                                        }
+                                    } else if (!hitSlot0 && !hitSlot1) {
+                                        onDismiss()
                                     }
                                 } else {
-                                    if (currentIsSilentOrDndActive) 0 else 1
-                                }
-                                val newState = (targetSlot == 0)
-                                if (completedNaturally && currentIsVisible) {
-                                    currentOnSelectState(newState)
-                                }
-                                coroutineScope.launch {
-                                    focusProgress.animateTo(
-                                        targetValue = targetSlot.toFloat(),
-                                        animationSpec = spring(
-                                            dampingRatio = Spring.DampingRatioNoBouncy,
-                                            stiffness = Spring.StiffnessMediumLow
+                                    val targetSlot = if (completedNaturally) {
+                                        if (focusProgress.value < 0.5f) 0 else 1
+                                    } else {
+                                        if (currentIsSilentOrDndActive) 0 else 1
+                                    }
+                                    val newState = (targetSlot == 0)
+                                    if (completedNaturally && currentIsVisible) {
+                                        currentOnSelectState(newState)
+                                    }
+                                    coroutineScope.launch {
+                                        focusProgress.animateTo(
+                                            targetValue = targetSlot.toFloat(),
+                                            animationSpec = spring(
+                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                                stiffness = Spring.StiffnessMediumLow
+                                            )
                                         )
-                                    )
+                                    }
                                 }
                             }
                         }
@@ -638,27 +664,53 @@ fun DndSilentBezelOverlay(
 
                                 val touchSlopPx = with(density) { 8.dp.toPx() }
                                 val isTap = kotlin.math.abs(totalDelta) < touchSlopPx
-                                val targetSlot = if (completedNaturally) {
-                                    if (isTap) {
-                                        if (down.position.x < centerCoord) 0 else 1
-                                    } else {
-                                        if (focusProgress.value < 0.5f) 0 else 1
+                                if (isTap) {
+                                    val hitSlot0 = kotlin.math.abs(down.position.x - slot0Coord) <= iconHalfBoxPx * 1.5f
+                                    val hitSlot1 = kotlin.math.abs(down.position.x - slot1Coord) <= iconHalfBoxPx * 1.5f
+                                    if (hitSlot0 && completedNaturally && currentIsVisible) {
+                                        currentOnSelectState(true)
+                                        coroutineScope.launch {
+                                            focusProgress.animateTo(
+                                                targetValue = 0f,
+                                                animationSpec = spring(
+                                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                                    stiffness = Spring.StiffnessMediumLow
+                                                )
+                                            )
+                                        }
+                                    } else if (hitSlot1 && completedNaturally && currentIsVisible) {
+                                        currentOnSelectState(false)
+                                        coroutineScope.launch {
+                                            focusProgress.animateTo(
+                                                targetValue = 1f,
+                                                animationSpec = spring(
+                                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                                    stiffness = Spring.StiffnessMediumLow
+                                                )
+                                            )
+                                        }
+                                    } else if (!hitSlot0 && !hitSlot1) {
+                                        onDismiss()
                                     }
                                 } else {
-                                    if (currentIsSilentOrDndActive) 0 else 1
-                                }
-                                val newState = (targetSlot == 0)
-                                if (completedNaturally && currentIsVisible) {
-                                    currentOnSelectState(newState)
-                                }
-                                coroutineScope.launch {
-                                    focusProgress.animateTo(
-                                        targetValue = targetSlot.toFloat(),
-                                        animationSpec = spring(
-                                            dampingRatio = Spring.DampingRatioNoBouncy,
-                                            stiffness = Spring.StiffnessMediumLow
+                                    val targetSlot = if (completedNaturally) {
+                                        if (focusProgress.value < 0.5f) 0 else 1
+                                    } else {
+                                        if (currentIsSilentOrDndActive) 0 else 1
+                                    }
+                                    val newState = (targetSlot == 0)
+                                    if (completedNaturally && currentIsVisible) {
+                                        currentOnSelectState(newState)
+                                    }
+                                    coroutineScope.launch {
+                                        focusProgress.animateTo(
+                                            targetValue = targetSlot.toFloat(),
+                                            animationSpec = spring(
+                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                                stiffness = Spring.StiffnessMediumLow
+                                            )
                                         )
-                                    )
+                                    }
                                 }
                             }
                         }

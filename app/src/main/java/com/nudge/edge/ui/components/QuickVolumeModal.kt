@@ -75,8 +75,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
@@ -458,8 +460,7 @@ fun QuickVolumeModal(
     }
 
     val transFraction = (pillTransparency / 100f).coerceIn(0f, 1f)
-    val housingAlpha = (1f - transFraction).coerceIn(0f, 1f)
-    val containerColor = if (lightMode) Color(0xFFEFEFF4).copy(alpha = housingAlpha) else Color.Black.copy(alpha = housingAlpha)
+    val containerColor = if (lightMode) Color(0xFFEFEFF4) else Color.Black
     val titleColor = if (lightMode) Color(0xFF1C1C1E) else Color.White
     val labelColor = if (lightMode) Color(0xFF1C1C1E).copy(alpha = 0.88f) else Color.White.copy(alpha = 0.90f)
     val percentColor = if (lightMode) Color(0xFF636366) else Color.White.copy(alpha = 0.62f)
@@ -1011,6 +1012,7 @@ fun QuickVolumeModal(
                     .offset(x = housingOffset.x.dp, y = housingOffset.y.dp)
                     .size(currentHousingWidthDp, currentHousingHeightDp)
                     .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
                         transformOrigin = when (sliderEdge) {
                             ScreenEdge.LEFT -> TransformOrigin(0f, animatedModalStretchOriginY)
                             ScreenEdge.RIGHT -> TransformOrigin(1f, animatedModalStretchOriginY)
@@ -1069,7 +1071,37 @@ fun QuickVolumeModal(
                         }
                         canvas.nativeCanvas.drawPath(housingPath.asAndroidPath(), shadowPaint)
                     }
-                    drawPath(housingPath, Color.Black.copy(alpha = housingAlpha))
+                    drawPath(housingPath, Color.Black)
+
+                    if (pillTransparency > 0 || volumeSliderBlur > 0f) {
+                        val pillHPx = effectivePillHeightDp.dp.toPx()
+                        val pillWPx = fitPillWidthDp.dp.toPx()
+                        val spacingPx = effectiveChannelSpacingDp.dp.toPx()
+                        val pillRPx = sliderCornerRadiusDp.dp.toPx().coerceIn(0f, minOf(pillWPx, pillHPx) * 0.5f)
+                        val totalPillsW = orderedChannels.size * pillWPx + (orderedChannels.size - 1).coerceAtLeast(0) * spacingPx
+
+                        val startX = when (sliderEdge) {
+                            ScreenEdge.RIGHT -> size.width - attachedEdgePaddingDp.dp.toPx() - totalPillsW
+                            ScreenEdge.LEFT -> attachedEdgePaddingDp.dp.toPx()
+                            else -> (size.width - totalPillsW) / 2f
+                        }
+                        val pillTop = if (isVerticalEdge) {
+                            (size.height - pillHPx) / 2f
+                        } else {
+                            if (sliderEdge == ScreenEdge.TOP) attachedEdgePaddingDp.dp.toPx() else (size.height - attachedEdgePaddingDp.dp.toPx() - pillHPx)
+                        }
+
+                        for (i in orderedChannels.indices) {
+                            val pillLeft = startX + i * (pillWPx + spacingPx)
+                            drawRoundRect(
+                                color = Color.Black,
+                                topLeft = Offset(pillLeft, pillTop),
+                                size = Size(pillWPx, pillHPx),
+                                cornerRadius = CornerRadius(pillRPx, pillRPx),
+                                blendMode = BlendMode.Clear
+                            )
+                        }
+                    }
                 }
 
                 Box(
@@ -1106,52 +1138,33 @@ fun QuickVolumeModal(
                             if (index > 0) {
                                 Spacer(modifier = Modifier.width(effectiveChannelSpacingDp.dp))
                             }
-                            val isPrimary = channel.isPrimary
-                            val pillAlpha = if (isPrimary) 1f else ((progress - 0.20f) / 0.80f).coerceIn(0f, 1f)
-                            val pillTranslationX = if (isPrimary || !isVerticalEdge) 0f else {
-                                val dir = if (sliderEdge == ScreenEdge.RIGHT) 1f else -1f
-                                (1f - progress) * dir * 40f
-                            }
-                            val pillTranslationY = if (isPrimary || isVerticalEdge) 0f else {
-                                val dir = if (sliderEdge == ScreenEdge.TOP) -1f else 1f
-                                (1f - progress) * dir * 40f
-                            }
-
-                            Box(
-                                modifier = Modifier.graphicsLayer {
-                                    alpha = pillAlpha
-                                    translationX = pillTranslationX
-                                    translationY = pillTranslationY
+                            VerticalStreamPill(
+                                label = channel.label,
+                                streamIcon = channel.streamIcon,
+                                fraction = channel.fraction,
+                                pillWidthDp = fitPillWidthDp,
+                                pillHeightDp = effectivePillHeightDp,
+                                pillCornerRadiusDp = sliderCornerRadiusDp,
+                                labelColor = labelColor,
+                                percentColor = percentColor,
+                                iconTintOverride = if (channel.streamIcon == MixerStreamIcon.BLUETOOTH) BluetoothRed else null,
+                                maxVolumeLimit = channel.maxVolumeLimit,
+                                customAppIcon = channel.customAppIcon,
+                                streamType = channel.streamType,
+                                pillTransparency = pillTransparency,
+                                volumeSliderBlur = volumeSliderBlur,
+                                pillBlurDp = pillBlurDp,
+                                isModalVisible = isVisible,
+                                onIconTap = channel.onIconTap,
+                                onValueChange = channel.onValueChange,
+                                onScrubStateChanged = { scrubbing ->
+                                    onStreamScrubStateChanged?.invoke(channel.streamType, scrubbing)
+                                },
+                                onStretchStateChanged = { stretching, originY ->
+                                    isAnySliderStretching = stretching
+                                    if (stretching) modalStretchOriginY = originY
                                 }
-                            ) {
-                                VerticalStreamPill(
-                                    label = channel.label,
-                                    streamIcon = channel.streamIcon,
-                                    fraction = channel.fraction,
-                                    pillWidthDp = fitPillWidthDp,
-                                    pillHeightDp = effectivePillHeightDp,
-                                    pillCornerRadiusDp = sliderCornerRadiusDp,
-                                    labelColor = labelColor,
-                                    percentColor = percentColor,
-                                    iconTintOverride = if (channel.streamIcon == MixerStreamIcon.BLUETOOTH) BluetoothRed else null,
-                                    maxVolumeLimit = channel.maxVolumeLimit,
-                                    customAppIcon = channel.customAppIcon,
-                                    streamType = channel.streamType,
-                                    pillTransparency = pillTransparency,
-                                    volumeSliderBlur = volumeSliderBlur,
-                                    pillBlurDp = pillBlurDp,
-                                    isModalVisible = isVisible && animFraction > 0.01f,
-                                    onIconTap = channel.onIconTap,
-                                    onValueChange = channel.onValueChange,
-                                    onScrubStateChanged = { scrubbing ->
-                                        onStreamScrubStateChanged?.invoke(channel.streamType, scrubbing)
-                                    },
-                                    onStretchStateChanged = { stretching, originY ->
-                                        isAnySliderStretching = stretching
-                                        if (stretching) modalStretchOriginY = originY
-                                    }
-                                )
-                            }
+                            )
                         }
                     }
                 }
@@ -1172,6 +1185,7 @@ fun QuickVolumeModal(
                     .offset(x = freeX, y = freeY)
                     .size(cardW, cardH)
                     .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
                         transformOrigin = TransformOrigin(0.5f, animatedModalStretchOriginY)
                         val clamped = animFraction.coerceIn(0f, 1f)
                         val enterScale = (0.86f + 0.14f * clamped) * scale
@@ -1206,9 +1220,39 @@ fun QuickVolumeModal(
                         onClick = {}
                     ),
                 shape = RoundedCornerShape(cardCornerDp.dp),
-                color = containerColor,
+                color = if (pillTransparency > 0 || volumeSliderBlur > 0f) Color.Transparent else containerColor,
                 shadowElevation = 20.dp
             ) {
+                if (pillTransparency > 0 || volumeSliderBlur > 0f) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val cardRadiusPx = cardCornerDp.dp.toPx()
+                        drawRoundRect(
+                            color = containerColor,
+                            cornerRadius = CornerRadius(cardRadiusPx, cardRadiusPx)
+                        )
+                        val pillWPx = sliderWidthDp.dp.toPx()
+                        val pillHPx = effectivePillHeightDp.dp.toPx()
+                        val spacingPx = 10.dp.toPx()
+                        val pillRPx = sliderCornerRadiusDp.dp.toPx().coerceIn(0f, minOf(pillWPx, pillHPx) * 0.5f)
+                        val totalPillsW = primaryFirstChannels.size * pillWPx + (primaryFirstChannels.size - 1).coerceAtLeast(0) * spacingPx
+                        val startX = if (floatingContentWidthDp.dp <= cardW) {
+                            (size.width - totalPillsW) / 2f
+                        } else {
+                            floatingCardPadDp.dp.toPx()
+                        }
+                        val pillTop = floatingCardPadDp.dp.toPx()
+                        for (i in primaryFirstChannels.indices) {
+                            val pillLeft = startX + i * (pillWPx + spacingPx)
+                            drawRoundRect(
+                                color = Color.Black,
+                                topLeft = Offset(pillLeft, pillTop),
+                                size = Size(pillWPx, pillHPx),
+                                cornerRadius = CornerRadius(pillRPx, pillRPx),
+                                blendMode = BlendMode.Clear
+                            )
+                        }
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -1243,7 +1287,7 @@ fun QuickVolumeModal(
                                 pillTransparency = pillTransparency,
                                 volumeSliderBlur = volumeSliderBlur,
                                 pillBlurDp = pillBlurDp,
-                                isModalVisible = isVisible && animFraction > 0.01f,
+                                isModalVisible = isVisible,
                                 onIconTap = channel.onIconTap,
                                 onValueChange = channel.onValueChange,
                                 onScrubStateChanged = { scrubbing ->
@@ -1423,9 +1467,12 @@ private fun VerticalStreamPill(
         currentOnStretchStateChanged?.invoke(isStretched, stretchOriginY)
     }
 
+    val pillShape = RoundedCornerShape(pillCornerRadiusDp.dp)
+
     Box(
         modifier = modifier
             .size(pillWidthDp.dp, pillHeightDp.dp)
+            .clip(pillShape)
             .pointerInput(streamType) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -1503,11 +1550,21 @@ private fun VerticalStreamPill(
         val radiusPx = with(density) {
             pillCornerRadiusDp.dp.toPx().coerceIn(0f, minOf(pillWidthDp.dp.toPx(), pillHeightDp.dp.toPx()) * 0.5f)
         }
+        val pillWPx = with(density) { pillWidthDp.dp.toPx() }
+        val pillHPx = with(density) { pillHeightDp.dp.toPx() }
         if (isSamsungActive && blurRadiusPx > 0) {
             AndroidView(
                 factory = { ctx ->
                     View(ctx).apply {
                         setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        OverlayBlurController.applySamsungTrackBlur(
+                            view = this,
+                            blurRadiusPx = blurRadiusPx,
+                            cornerRadiusPx = radiusPx,
+                            isHudVisible = isModalVisible,
+                            widthPx = pillWPx,
+                            heightPx = pillHPx
+                        )
                     }
                 },
                 update = { view ->
@@ -1515,10 +1572,14 @@ private fun VerticalStreamPill(
                         view = view,
                         blurRadiusPx = blurRadiusPx,
                         cornerRadiusPx = radiusPx,
-                        isHudVisible = isModalVisible
+                        isHudVisible = isModalVisible,
+                        widthPx = pillWPx,
+                        heightPx = pillHPx
                     )
                 },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .size(pillWidthDp.dp, pillHeightDp.dp)
+                    .clip(pillShape)
             )
         }
 

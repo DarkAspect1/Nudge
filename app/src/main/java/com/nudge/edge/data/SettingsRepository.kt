@@ -193,6 +193,7 @@ class SettingsRepository private constructor(context: Context) {
         val NUDGE_MENU_Y_FRACTION = floatPreferencesKey("nudge_menu_y_fraction")
         val NUDGE_MENU_EDGE = stringPreferencesKey("nudge_menu_edge")
         val ENABLE_THIN_VOLUME_HUD = booleanPreferencesKey("enable_thin_volume_hud")
+        val THIN_HUD_EDGE_INSET_DP = floatPreferencesKey("thin_hud_edge_inset_dp")
         val NUDGE_MENU_APPS_JSON = stringPreferencesKey("nudge_menu_apps_json")
     }
 
@@ -325,6 +326,9 @@ class SettingsRepository private constructor(context: Context) {
                 prefs[Keys.HUD_EDGE_INSET_DP] ?: defaults.hudEdgeInsetDp
             ),
             enableThinVolumeHud = prefs[Keys.ENABLE_THIN_VOLUME_HUD] ?: defaults.enableThinVolumeHud,
+            thinHudEdgeInsetDp = NudgeSettings.clampThinHudEdgeInset(
+                prefs[Keys.THIN_HUD_EDGE_INSET_DP] ?: defaults.thinHudEdgeInsetDp
+            ),
             hapticsEnabled = prefs[Keys.HAPTICS_ENABLED] ?: defaults.hapticsEnabled,
             edgePopHapticsEnabled = prefs[Keys.EDGE_POP_HAPTICS_ENABLED] ?: defaults.edgePopHapticsEnabled,
             volumeSliderHapticsEnabled = prefs[Keys.VOLUME_SLIDER_HAPTICS_ENABLED] ?: defaults.volumeSliderHapticsEnabled,
@@ -1859,6 +1863,16 @@ class SettingsRepository private constructor(context: Context) {
         requestLivePreview(PreviewTarget.HUD)
         scope.launch {
             appContext.nudgeDataStore.edit { it[Keys.ENABLE_THIN_VOLUME_HUD] = enabled }
+        }
+    }
+
+    fun setThinHudEdgeInsetDp(insetDp: Float) {
+        val clamped = NudgeSettings.clampThinHudEdgeInset(insetDp)
+        if (_settings.value.thinHudEdgeInsetDp == clamped) return
+        _settings.value = _settings.value.copy(thinHudEdgeInsetDp = clamped)
+        requestLivePreview(PreviewTarget.HUD)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.THIN_HUD_EDGE_INSET_DP] = clamped }
         }
     }
 

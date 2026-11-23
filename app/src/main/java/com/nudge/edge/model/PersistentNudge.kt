@@ -28,7 +28,6 @@ enum class PersistentNudgeAction(val id: String, val displayName: String) {
     TOGGLE_FLASHLIGHT("toggle_flashlight", "Toggle Flashlight"),
     TOGGLE_AUTO_ROTATE("toggle_auto_rotate", "Toggle Auto-Rotate"),
     OPEN_CAMERA("open_camera", "Open Camera"),
-    APP_SWITCH("app_switch", "Switch to Last App"),
     OPEN_APP("open_app", "Open App(s)"),
     SHOW_SYSTEM_VOLUME("show_system_volume", "Show System Volume Slider");
 
@@ -39,6 +38,7 @@ enum class PersistentNudgeAction(val id: String, val displayName: String) {
                 "mute_unmute" -> VOLUME_SLIDER_HUD
                 "one_handed_mode" -> VOLUME_SLIDER_HUD
                 "split_screen" -> VOLUME_SLIDER_HUD
+                "app_switch" -> VOLUME_SLIDER_HUD
                 else -> entries.firstOrNull { it.id == id } ?: VOLUME_SLIDER_HUD
             }
         }

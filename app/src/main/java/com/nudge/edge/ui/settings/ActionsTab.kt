@@ -247,14 +247,27 @@ private fun ModesPermissionsHeader(
         )
     }
 
-    var isAssistantConfigured by remember(context, settings.powerAssistantConfigured) {
-        val isActive = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            VoiceInteractionService.isActiveService(
-                context,
-                ComponentName(context, NudgeVoiceInteractionService::class.java)
-            )
+    fun checkAssistantConfigured(ctx: Context): Boolean {
+        val pkg = ctx.packageName
+        val secureAssistant = runCatching {
+            Settings.Secure.getString(ctx.contentResolver, "assistant")
+        }.getOrNull().orEmpty()
+        val secureVoice = runCatching {
+            Settings.Secure.getString(ctx.contentResolver, "voice_interaction_service")
+        }.getOrNull().orEmpty()
+        val isServiceActive = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            runCatching {
+                VoiceInteractionService.isActiveService(
+                    ctx,
+                    ComponentName(ctx, NudgeVoiceInteractionService::class.java)
+                )
+            }.getOrDefault(false)
         } else false
-        mutableStateOf(isActive || settings.powerAssistantConfigured)
+        return isServiceActive || secureAssistant.contains(pkg) || secureVoice.contains(pkg)
+    }
+
+    var isAssistantConfigured by remember(context) {
+        mutableStateOf(checkAssistantConfigured(context))
     }
 
     val postNotifLauncher = rememberLauncherForActivityResult(
@@ -275,13 +288,11 @@ private fun ModesPermissionsHeader(
                 Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
         } else true
-        val isActive = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            VoiceInteractionService.isActiveService(
-                context,
-                ComponentName(context, NudgeVoiceInteractionService::class.java)
-            )
-        } else false
-        isAssistantConfigured = isActive || settings.powerAssistantConfigured
+        val active = checkAssistantConfigured(context)
+        isAssistantConfigured = active
+        if (settings.powerAssistantConfigured != active) {
+            repository.setPowerAssistantConfigured(active)
+        }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -289,6 +300,12 @@ private fun ModesPermissionsHeader(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 refreshPermissions()
+                coroutineScope.launch {
+                    delay(150L)
+                    refreshPermissions()
+                    delay(300L)
+                    refreshPermissions()
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -526,13 +543,13 @@ private fun PermissionItemCard(
                 )
                 Surface(
                     shape = CircleShape,
-                    color = if (isGranted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
+                    color = if (isGranted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.errorContainer
                 ) {
                     Text(
                         text = if (isGranted) grantedText else deniedText,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = if (isGranted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                        color = if (isGranted) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onErrorContainer,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
@@ -657,14 +674,14 @@ private fun DndPanelCard(
                                         .weight(1f)
                                         .clickable { repository.setDndModeType(mode) },
                                     shape = CircleShape,
-                                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
+                                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh
                                 ) {
                                     Text(
                                         text = mode.displayName,
                                         modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp),
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
                                 }
@@ -2133,7 +2150,7 @@ private fun HardwareTriggerSelector(
                                     showDialog = false
                                 },
                             shape = CircleShape,
-                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -2144,13 +2161,13 @@ private fun HardwareTriggerSelector(
                                     text = trigger.displayName,
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
                                 )
                                 if (isSelected) {
                                     Icon(
                                         imageVector = Icons.Rounded.Check,
                                         contentDescription = "Selected",
-                                        tint = MaterialTheme.colorScheme.primary,
+                                        tint = MaterialTheme.colorScheme.onPrimary,
                                         modifier = Modifier.size(16.dp)
                                     )
                                 }
@@ -2192,14 +2209,14 @@ private fun SideSelectorRow(
                         .weight(1f)
                         .clickable { onEdgeSelected(edge) },
                     shape = CircleShape,
-                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
+                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh
                 ) {
                     Text(
                         text = edge.name,
                         modifier = Modifier.padding(vertical = 10.dp),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
@@ -2517,14 +2534,14 @@ private fun NudgeConfigItemCard(
                                 .weight(1f)
                                 .clickable { onUpdate(nudge.copy(edge = edge)) },
                             shape = CircleShape,
-                            color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow
+                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerLow
                         ) {
                             Text(
                                 text = label,
                                 modifier = Modifier.padding(vertical = 8.dp),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
                         }
@@ -2631,7 +2648,6 @@ private fun NudgeConfigItemCard(
                         listOf(
                             PersistentNudgeAction.NUDGE_MENU,
                             PersistentNudgeAction.OPEN_APP,
-                            PersistentNudgeAction.APP_SWITCH,
                             PersistentNudgeAction.OPEN_CAMERA,
                             PersistentNudgeAction.VOICE_ASSISTANT,
                             PersistentNudgeAction.VOLUME_SLIDER_HUD,

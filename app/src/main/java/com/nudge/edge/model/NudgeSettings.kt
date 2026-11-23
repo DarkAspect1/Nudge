@@ -286,6 +286,7 @@ data class NudgeSettings(
     val floatingMode: Boolean = false,
     val hudEdgeInsetDp: Float = 0f,
     val enableThinVolumeHud: Boolean = true,
+    val thinHudEdgeInsetDp: Float = 6f,
     val hapticsEnabled: Boolean = true,
     val edgePopHapticsEnabled: Boolean = true,
     val volumeSliderHapticsEnabled: Boolean = true,
@@ -441,6 +442,9 @@ data class NudgeSettings(
         const val MAX_HUD_CORNER_RADIUS_DP = 32f
         const val MIN_HUD_EDGE_INSET_DP = 0f
         const val MAX_HUD_EDGE_INSET_DP = 48f
+        const val DEFAULT_THIN_HUD_EDGE_INSET_DP = 6f
+        const val MIN_THIN_HUD_EDGE_INSET_DP = 0f
+        const val MAX_THIN_HUD_EDGE_INSET_DP = 48f
         const val MIN_AUTO_HIDE_MS = 250L
         const val MAX_AUTO_HIDE_MS = 5000L
         const val AUTO_HIDE_STEP_MS = 50L
@@ -564,6 +568,9 @@ data class NudgeSettings(
 
         fun clampHudEdgeInset(value: Float): Float =
             value.coerceIn(MIN_HUD_EDGE_INSET_DP, MAX_HUD_EDGE_INSET_DP)
+
+        fun clampThinHudEdgeInset(value: Float): Float =
+            value.coerceIn(MIN_THIN_HUD_EDGE_INSET_DP, MAX_THIN_HUD_EDGE_INSET_DP)
 
         fun clampAutoHideMs(value: Long): Long =
             value.coerceIn(MIN_AUTO_HIDE_MS, MAX_AUTO_HIDE_MS)
