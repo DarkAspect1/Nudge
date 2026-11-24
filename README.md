@@ -15,9 +15,8 @@ The app shows edge pops when you press the volume or power buttons, volume slide
 - **Edge pops:** on volume and power button presses.
 **Choose between two options:** Rounded-top or Flat-top with an optional white glow
   
-- **Custom volume slider:** inspired by a concept design that was originally made for Iphones has now become a reality for Androids LOL.
-  Has an option for floating.
-- **Thin volume slider:** when long pressing volume up/down or clicking them +2 times, it now shows a thin slider (a mimic of the IOS slider) and its **OPTIONAL**
+- **Custom volume slider:** inspired by a concept design that was originally made for Iphones has now become a reality for Androids...
+- **Thin volume slider:** when long pressing volume up/down or clicking them +2 times, it now shows a thin slider and its **OPTIONAL**
 - **Cycle between Ring, Vibrate, and Mute modes easily:** Long pressing the sound icon on the slider HUD cycles between these 3 modes and displays a label for the current mode
 - **Transparency & Blur for volume slider**
 
