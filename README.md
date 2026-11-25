@@ -20,10 +20,12 @@ A highly customizable app that shows edge pops/animations, redesigned volume sli
 - **Cycle between Ring, Vibrate, and Mute modes easily:** Long pressing the sound icon on the slider HUD cycles between these 3 modes and displays a label for the current mode and there's a panel if you want to make it even more easier using button triggers.
 - **Transparency & Blur for volume slider**
 - **Audio Mixer:** attach it to the volume slider or leave it floating.
+
   ---
 - **DND/Silent panel:** change between Three modes sound/vibrate/silent panel with an option to choose only 2 of them & dnd on/off panel.
 - **Modes/Actions panel:** add new custom modes with custom icons/colors/names or even edit the existing ones and change their order like how you want it to be! **How it works:** it sends a quick silent notification that can be used by different automation/routine apps to do the functionality you want. or even better, for automation apps specifically that can receive broadcasts, the app sends a broadcast when a mode is selected alongside the silent notification (there's a guide in the app for detailed info)
 - **Both panels are triggered using side buttons** with up to 7 different combinations (custom buttons included for devices that has an additional button). When the panels are open, you can switch between modes using volume buttons or gesture swiping!
+
 ---
 - **Nudge Edge handles:** open by swiping: Run actions like screenshots, flashlight, camera, and more.
 **Up to 10 nudges.**
@@ -33,10 +35,11 @@ A highly customizable app that shows edge pops/animations, redesigned volume sli
 **Nudge Menu:** a customizable menu that has all nudge options in a single place by cycling between them
 
 **Open Apps Menu:** choose your favourite apps, re-order them as you like, and cycle between them
----
 
+---
 - **Individual app volume:** every app that has a sound shows a slider with the app name and icon **Must note that it uses Shizuku**
 - **Volume Counter:** Show volume count on your volume slider, applies to individual app volume slider too.
+
 ---
 - **Shizuku Implementation:**
   
@@ -51,14 +54,13 @@ A highly customizable app that shows edge pops/animations, redesigned volume sli
 **Use shizuku for DND**
 
 **Use shizuku for hold power button**
----
 
+---
 - **All panels activity:** all panels are accessible from activity launcher or any similar feature in different apps.
 - **Tapping anywhere on the screen dismisses the panels**
 - **Want haptics too? there's a whole section for that part:** every panel and modes cycling has a separate switch
   
  ---
-
 ## Problems and how to fix them
 
 ### Play protect flagged the app?
