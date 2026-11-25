@@ -27,19 +27,31 @@ A highly customizable app that shows edge pops/animations, redesigned volume sli
 
 - **Nudge Edge handles:** open by swiping: Run actions like screenshots, flashlight, camera, and more.
 **Up to 10 nudges.**
+  
 **Featured Actions:**
+
 **Nudge Menu:** a customizable menu that has all nudge options in a single place by cycling between them
+
 **Open Apps Menu:** choose your favourite apps, re-order them as you like, and cycle between them
+
 
 - **Individual app volume:** every app that has a sound shows a slider with the app name and icon **Must note that it uses Shizuku**
 - **Volume Counter:** Show volume count on your volume slider, applies to individual app volume slider too.
-- **Shizuku Implementation:** 
+  
+- **Shizuku Implementation:**
+  
 **Grant all permissions with a single click**
+
 **Manage cloaked apps to hide the app accessibility (eg. banking apps)**
+
 **Watchdog to keep the app & accessibility service alive**
+
 **Watchdog to keep permissions active**
+
 **Use shizuku for DND**
+
 **Use shizuku for hold power button**
+
 
 - **All panels activity:** all panels are accessible from activity launcher or any similar feature in different apps.
 - **Tapping anywhere on the screen dismisses the panels**
