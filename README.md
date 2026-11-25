@@ -9,6 +9,8 @@ The app shows edge pops as you volume or power buttons, redesigned volume slider
 </p>
 
 ![Nudge](assets/Nudge.png)
+![Nudge](assets/Nudge.png)
+![Nudge](assets/Nudge.png)
 
 ## Features
 
