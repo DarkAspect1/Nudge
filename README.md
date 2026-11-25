@@ -58,7 +58,7 @@ A highly customizable app that shows edge pops/animations, redesigned volume sli
 ---
 - **All panels activity:** all panels are accessible from activity launcher or any similar feature in different apps.
 - **Tapping anywhere on the screen dismisses the panels**
-- **Want haptics too? there's a whole section for that part:** every panel and modes cycling has a separate switch
+- **Want haptics too? there's a whole section for that part:** every panel has a separate switch
   
  ---
 ## Problems and how to fix them
