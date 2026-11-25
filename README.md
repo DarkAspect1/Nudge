@@ -17,7 +17,7 @@ A highly customizable app that shows edge pops/animations, redesigned volume sli
   
 - **Custom volume slider:** a slider connected to the bezels that feels integrated with the phone.
 - **Optional Thin volume slider:** when long pressing volume up/down or clicking them +2 times, it shows a thin slider
-- **Cycle between Ring, Vibrate, and Mute modes easily:** Long pressing the sound icon on the slider HUD cycles between these 3 modes and displays a label for the current mode and there's a panel if you want to make it even more easier using button triggers.
+- **Cycle between Ring, Vibrate, and Mute modes easily:** Long pressing the sound icon on the slider HUD cycles between these 3 modes and displays a label for the current mode
 - **Transparency & Blur for volume slider**
 - **Audio Mixer:** attach it to the volume slider or leave it floating.
 
