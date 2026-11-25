@@ -75,8 +75,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
@@ -139,6 +141,7 @@ private data class MixerChannelItem(
     val fraction: Float,
     val isPrimary: Boolean,
     val maxVolumeLimit: Int = 100,
+    val callMinStep: Int = 0,
     val customAppIcon: Drawable? = null,
     val streamType: Int? = null,
     val onIconTap: () -> Unit,
@@ -407,7 +410,7 @@ fun QuickVolumeModal(
     val coroutineScope = rememberCoroutineScope()
     val expansionProgress = remember { Animatable(if (isVisible) 1f else 0f) }
 
-    var localCallFraction by remember {
+    var localCallFraction by remember(callFractionExternal) {
         mutableFloatStateOf(
             callFractionExternal
                 ?: fineVolumeController?.readSystemNormalizedVolume(AudioManager.STREAM_VOICE_CALL)
@@ -458,8 +461,7 @@ fun QuickVolumeModal(
     }
 
     val transFraction = (pillTransparency / 100f).coerceIn(0f, 1f)
-    val housingAlpha = (1f - transFraction).coerceIn(0f, 1f)
-    val containerColor = if (lightMode) Color(0xFFEFEFF4).copy(alpha = housingAlpha) else Color.Black.copy(alpha = housingAlpha)
+    val containerColor = if (lightMode) Color.White else Color.Black
     val titleColor = if (lightMode) Color(0xFF1C1C1E) else Color.White
     val labelColor = if (lightMode) Color(0xFF1C1C1E).copy(alpha = 0.88f) else Color.White.copy(alpha = 0.90f)
     val percentColor = if (lightMode) Color(0xFF636366) else Color.White.copy(alpha = 0.62f)
@@ -583,6 +585,7 @@ fun QuickVolumeModal(
                     fraction = callFraction.coerceIn(0f, 1f),
                     isPrimary = isCallActive,
                     maxVolumeLimit = callMaxVolumeLimit,
+                    callMinStep = fineVolumeController?.let { it.getEffectiveMinIndex(AudioManager.STREAM_VOICE_CALL) * FineVolumeController.FINE_MULTIPLIER } ?: 10,
                     streamType = AudioManager.STREAM_VOICE_CALL,
                     onIconTap = {
                         val minFrac = fineVolumeController?.getStreamMinNormalizedFraction(AudioManager.STREAM_VOICE_CALL) ?: 0.10f
@@ -592,7 +595,10 @@ fun QuickVolumeModal(
                         } else {
                             lastCallOnFraction.coerceAtLeast(0.35f)
                         }
-                        if (onStreamFractionChanged != null) {
+                        localCallFraction = next
+                        if (onCallFractionChanged != null) {
+                            onCallFractionChanged.invoke(next)
+                        } else if (onStreamFractionChanged != null) {
                             onStreamFractionChanged(AudioManager.STREAM_VOICE_CALL, next)
                         } else if (fineVolumeController != null) {
                             val applied = fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_VOICE_CALL, next)
@@ -601,7 +607,6 @@ fun QuickVolumeModal(
                             volumeController.setStreamFraction(AudioManager.STREAM_VOICE_CALL, next)
                             localCallFraction = volumeController.getStreamFraction(AudioManager.STREAM_VOICE_CALL)
                         }
-                        onCallFractionChanged?.invoke(next)
                         if (hapticsEnabled) volumeController.triggerHaptic()
                     },
                     onValueChange = { value ->
@@ -609,7 +614,9 @@ fun QuickVolumeModal(
                         val effectiveValue = value.coerceIn(minFrac, 1f)
                         if (effectiveValue > 0.01f) lastCallOnFraction = effectiveValue
                         localCallFraction = effectiveValue
-                        if (onStreamFractionChanged != null) {
+                        if (onCallFractionChanged != null) {
+                            onCallFractionChanged.invoke(effectiveValue)
+                        } else if (onStreamFractionChanged != null) {
                             onStreamFractionChanged(AudioManager.STREAM_VOICE_CALL, effectiveValue)
                         } else if (fineVolumeController != null) {
                             val applied = fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_VOICE_CALL, effectiveValue)
@@ -617,7 +624,6 @@ fun QuickVolumeModal(
                         } else {
                             volumeController.setStreamFraction(AudioManager.STREAM_VOICE_CALL, effectiveValue)
                         }
-                        onCallFractionChanged?.invoke(effectiveValue)
                     }
                 )
             )
@@ -1011,6 +1017,7 @@ fun QuickVolumeModal(
                     .offset(x = housingOffset.x.dp, y = housingOffset.y.dp)
                     .size(currentHousingWidthDp, currentHousingHeightDp)
                     .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
                         transformOrigin = when (sliderEdge) {
                             ScreenEdge.LEFT -> TransformOrigin(0f, animatedModalStretchOriginY)
                             ScreenEdge.RIGHT -> TransformOrigin(1f, animatedModalStretchOriginY)
@@ -1069,7 +1076,37 @@ fun QuickVolumeModal(
                         }
                         canvas.nativeCanvas.drawPath(housingPath.asAndroidPath(), shadowPaint)
                     }
-                    drawPath(housingPath, Color.Black.copy(alpha = housingAlpha))
+                    drawPath(housingPath, if (lightMode) Color.White else Color.Black)
+
+                    if (pillTransparency > 0 || volumeSliderBlur > 0f) {
+                        val pillHPx = effectivePillHeightDp.dp.toPx()
+                        val pillWPx = fitPillWidthDp.dp.toPx()
+                        val spacingPx = effectiveChannelSpacingDp.dp.toPx()
+                        val pillRPx = sliderCornerRadiusDp.dp.toPx().coerceIn(0f, minOf(pillWPx, pillHPx) * 0.5f)
+                        val totalPillsW = orderedChannels.size * pillWPx + (orderedChannels.size - 1).coerceAtLeast(0) * spacingPx
+
+                        val startX = when (sliderEdge) {
+                            ScreenEdge.RIGHT -> size.width - attachedEdgePaddingDp.dp.toPx() - totalPillsW
+                            ScreenEdge.LEFT -> attachedEdgePaddingDp.dp.toPx()
+                            else -> (size.width - totalPillsW) / 2f
+                        }
+                        val pillTop = if (isVerticalEdge) {
+                            (size.height - pillHPx) / 2f
+                        } else {
+                            if (sliderEdge == ScreenEdge.TOP) attachedEdgePaddingDp.dp.toPx() else (size.height - attachedEdgePaddingDp.dp.toPx() - pillHPx)
+                        }
+
+                        for (i in orderedChannels.indices) {
+                            val pillLeft = startX + i * (pillWPx + spacingPx)
+                            drawRoundRect(
+                                color = Color.Black,
+                                topLeft = Offset(pillLeft, pillTop),
+                                size = Size(pillWPx, pillHPx),
+                                cornerRadius = CornerRadius(pillRPx, pillRPx),
+                                blendMode = BlendMode.Clear
+                            )
+                        }
+                    }
                 }
 
                 Box(
@@ -1106,52 +1143,35 @@ fun QuickVolumeModal(
                             if (index > 0) {
                                 Spacer(modifier = Modifier.width(effectiveChannelSpacingDp.dp))
                             }
-                            val isPrimary = channel.isPrimary
-                            val pillAlpha = if (isPrimary) 1f else ((progress - 0.20f) / 0.80f).coerceIn(0f, 1f)
-                            val pillTranslationX = if (isPrimary || !isVerticalEdge) 0f else {
-                                val dir = if (sliderEdge == ScreenEdge.RIGHT) 1f else -1f
-                                (1f - progress) * dir * 40f
-                            }
-                            val pillTranslationY = if (isPrimary || isVerticalEdge) 0f else {
-                                val dir = if (sliderEdge == ScreenEdge.TOP) -1f else 1f
-                                (1f - progress) * dir * 40f
-                            }
-
-                            Box(
-                                modifier = Modifier.graphicsLayer {
-                                    alpha = pillAlpha
-                                    translationX = pillTranslationX
-                                    translationY = pillTranslationY
+                            VerticalStreamPill(
+                                label = channel.label,
+                                streamIcon = channel.streamIcon,
+                                fraction = channel.fraction,
+                                pillWidthDp = fitPillWidthDp,
+                                pillHeightDp = effectivePillHeightDp,
+                                pillCornerRadiusDp = sliderCornerRadiusDp,
+                                labelColor = labelColor,
+                                percentColor = percentColor,
+                                iconTintOverride = if (channel.streamIcon == MixerStreamIcon.BLUETOOTH) BluetoothRed else null,
+                                maxVolumeLimit = channel.maxVolumeLimit,
+                                callMinStep = channel.callMinStep,
+                                customAppIcon = channel.customAppIcon,
+                                streamType = channel.streamType,
+                                pillTransparency = pillTransparency,
+                                volumeSliderBlur = volumeSliderBlur,
+                                pillBlurDp = pillBlurDp,
+                                isModalVisible = isVisible,
+                                lightMode = lightMode,
+                                onIconTap = channel.onIconTap,
+                                onValueChange = channel.onValueChange,
+                                onScrubStateChanged = { scrubbing ->
+                                    onStreamScrubStateChanged?.invoke(channel.streamType, scrubbing)
+                                },
+                                onStretchStateChanged = { stretching, originY ->
+                                    isAnySliderStretching = stretching
+                                    if (stretching) modalStretchOriginY = originY
                                 }
-                            ) {
-                                VerticalStreamPill(
-                                    label = channel.label,
-                                    streamIcon = channel.streamIcon,
-                                    fraction = channel.fraction,
-                                    pillWidthDp = fitPillWidthDp,
-                                    pillHeightDp = effectivePillHeightDp,
-                                    pillCornerRadiusDp = sliderCornerRadiusDp,
-                                    labelColor = labelColor,
-                                    percentColor = percentColor,
-                                    iconTintOverride = if (channel.streamIcon == MixerStreamIcon.BLUETOOTH) BluetoothRed else null,
-                                    maxVolumeLimit = channel.maxVolumeLimit,
-                                    customAppIcon = channel.customAppIcon,
-                                    streamType = channel.streamType,
-                                    pillTransparency = pillTransparency,
-                                    volumeSliderBlur = volumeSliderBlur,
-                                    pillBlurDp = pillBlurDp,
-                                    isModalVisible = isVisible && animFraction > 0.01f,
-                                    onIconTap = channel.onIconTap,
-                                    onValueChange = channel.onValueChange,
-                                    onScrubStateChanged = { scrubbing ->
-                                        onStreamScrubStateChanged?.invoke(channel.streamType, scrubbing)
-                                    },
-                                    onStretchStateChanged = { stretching, originY ->
-                                        isAnySliderStretching = stretching
-                                        if (stretching) modalStretchOriginY = originY
-                                    }
-                                )
-                            }
+                            )
                         }
                     }
                 }
@@ -1172,6 +1192,7 @@ fun QuickVolumeModal(
                     .offset(x = freeX, y = freeY)
                     .size(cardW, cardH)
                     .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
                         transformOrigin = TransformOrigin(0.5f, animatedModalStretchOriginY)
                         val clamped = animFraction.coerceIn(0f, 1f)
                         val enterScale = (0.86f + 0.14f * clamped) * scale
@@ -1206,9 +1227,39 @@ fun QuickVolumeModal(
                         onClick = {}
                     ),
                 shape = RoundedCornerShape(cardCornerDp.dp),
-                color = containerColor,
+                color = if (pillTransparency > 0 || volumeSliderBlur > 0f) Color.Transparent else containerColor,
                 shadowElevation = 20.dp
             ) {
+                if (pillTransparency > 0 || volumeSliderBlur > 0f) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val cardRadiusPx = cardCornerDp.dp.toPx()
+                        drawRoundRect(
+                            color = containerColor,
+                            cornerRadius = CornerRadius(cardRadiusPx, cardRadiusPx)
+                        )
+                        val pillWPx = sliderWidthDp.dp.toPx()
+                        val pillHPx = effectivePillHeightDp.dp.toPx()
+                        val spacingPx = 10.dp.toPx()
+                        val pillRPx = sliderCornerRadiusDp.dp.toPx().coerceIn(0f, minOf(pillWPx, pillHPx) * 0.5f)
+                        val totalPillsW = primaryFirstChannels.size * pillWPx + (primaryFirstChannels.size - 1).coerceAtLeast(0) * spacingPx
+                        val startX = if (floatingContentWidthDp.dp <= cardW) {
+                            (size.width - totalPillsW) / 2f
+                        } else {
+                            floatingCardPadDp.dp.toPx()
+                        }
+                        val pillTop = floatingCardPadDp.dp.toPx()
+                        for (i in primaryFirstChannels.indices) {
+                            val pillLeft = startX + i * (pillWPx + spacingPx)
+                            drawRoundRect(
+                                color = Color.Black,
+                                topLeft = Offset(pillLeft, pillTop),
+                                size = Size(pillWPx, pillHPx),
+                                cornerRadius = CornerRadius(pillRPx, pillRPx),
+                                blendMode = BlendMode.Clear
+                            )
+                        }
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -1238,12 +1289,14 @@ fun QuickVolumeModal(
                                 percentColor = percentColor,
                                 iconTintOverride = if (channel.streamIcon == MixerStreamIcon.BLUETOOTH) BluetoothRed else null,
                                 maxVolumeLimit = channel.maxVolumeLimit,
+                                callMinStep = channel.callMinStep,
                                 customAppIcon = channel.customAppIcon,
                                 streamType = channel.streamType,
                                 pillTransparency = pillTransparency,
                                 volumeSliderBlur = volumeSliderBlur,
                                 pillBlurDp = pillBlurDp,
-                                isModalVisible = isVisible && animFraction > 0.01f,
+                                isModalVisible = isVisible,
+                                lightMode = lightMode,
                                 onIconTap = channel.onIconTap,
                                 onValueChange = channel.onValueChange,
                                 onScrubStateChanged = { scrubbing ->
@@ -1341,12 +1394,14 @@ private fun VerticalStreamPill(
     percentColor: Color,
     iconTintOverride: Color? = null,
     maxVolumeLimit: Int = 100,
+    callMinStep: Int = 0,
     customAppIcon: Drawable? = null,
     streamType: Int? = null,
     pillTransparency: Int = 0,
     volumeSliderBlur: Float = 0f,
     pillBlurDp: Float = 0f,
     isModalVisible: Boolean = true,
+    lightMode: Boolean = false,
     onIconTap: () -> Unit,
     onValueChange: (Float) -> Unit,
     onScrubStateChanged: ((Boolean) -> Unit)? = null,
@@ -1364,8 +1419,8 @@ private fun VerticalStreamPill(
     val currentOnScrubStateChanged by rememberUpdatedState(onScrubStateChanged)
 
     val isCall = streamType == AudioManager.STREAM_VOICE_CALL
-    val maxCallSteps = (maxVolumeLimit / FineVolumeController.FINE_MULTIPLIER).coerceAtLeast(1)
-    val minFraction = if (isCall) (1f / maxCallSteps.toFloat()).coerceIn(0f, 1f) else 0f
+    val effCallMinStep = if (isCall) callMinStep.coerceAtLeast(1) else 0
+    val minFraction = if (isCall && maxVolumeLimit > 0) (effCallMinStep.toFloat() / maxVolumeLimit.toFloat()).coerceIn(0f, 1f) else 0f
 
     var isDragging by remember { mutableStateOf(false) }
     var localValue by remember { mutableFloatStateOf(fraction.coerceIn(minFraction, 1f)) }
@@ -1423,9 +1478,12 @@ private fun VerticalStreamPill(
         currentOnStretchStateChanged?.invoke(isStretched, stretchOriginY)
     }
 
+    val pillShape = RoundedCornerShape(pillCornerRadiusDp.dp)
+
     Box(
         modifier = modifier
             .size(pillWidthDp.dp, pillHeightDp.dp)
+            .clip(pillShape)
             .pointerInput(streamType) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -1503,11 +1561,21 @@ private fun VerticalStreamPill(
         val radiusPx = with(density) {
             pillCornerRadiusDp.dp.toPx().coerceIn(0f, minOf(pillWidthDp.dp.toPx(), pillHeightDp.dp.toPx()) * 0.5f)
         }
+        val pillWPx = with(density) { pillWidthDp.dp.toPx() }
+        val pillHPx = with(density) { pillHeightDp.dp.toPx() }
         if (isSamsungActive && blurRadiusPx > 0) {
             AndroidView(
                 factory = { ctx ->
                     View(ctx).apply {
                         setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        OverlayBlurController.applySamsungTrackBlur(
+                            view = this,
+                            blurRadiusPx = blurRadiusPx,
+                            cornerRadiusPx = radiusPx,
+                            isHudVisible = isModalVisible,
+                            widthPx = pillWPx,
+                            heightPx = pillHPx
+                        )
                     }
                 },
                 update = { view ->
@@ -1515,10 +1583,14 @@ private fun VerticalStreamPill(
                         view = view,
                         blurRadiusPx = blurRadiusPx,
                         cornerRadiusPx = radiusPx,
-                        isHudVisible = isModalVisible
+                        isHudVisible = isModalVisible,
+                        widthPx = pillWPx,
+                        heightPx = pillHPx
                     )
                 },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .size(pillWidthDp.dp, pillHeightDp.dp)
+                    .clip(pillShape)
             )
         }
 
@@ -1572,8 +1644,7 @@ private fun VerticalStreamPill(
 
             val fillTop = (pillH - pillH * clamped).coerceIn(0f, pillH)
             val currentSteps = if (isCall) {
-                val minFine = 10
-                (clamped * maxVolumeLimit).roundToInt().coerceIn(minFine, maxVolumeLimit)
+                (clamped * maxVolumeLimit).roundToInt().coerceIn(effCallMinStep, maxVolumeLimit)
             } else {
                 (clamped * maxVolumeLimit).roundToInt().coerceIn(0, maxVolumeLimit)
             }
@@ -1599,7 +1670,7 @@ private fun VerticalStreamPill(
             clipPath(pillPath) {
                 if (clamped > 0.002f) {
                     drawRect(
-                        color = VerticalPillFill,
+                        color = if (lightMode) Color.Black else VerticalPillFill,
                         topLeft = Offset(0f, fillTop),
                         size = Size(pillW, pillH - fillTop)
                     )
@@ -1607,13 +1678,14 @@ private fun VerticalStreamPill(
 
                 if (fillTop > 0f) {
                     clipRect(0f, 0f, pillW, fillTop) {
-                        val tintColor = iconTintOverride ?: if (isMuted) VerticalIconOffGray else VerticalIconOnDark
+                        val onUnfilledColor = if (lightMode) Color(0xFF1C1C1E) else VerticalIconOnDark
+                        val tintColor = iconTintOverride ?: if (isMuted) VerticalIconOffGray else onUnfilledColor
                         drawIntoCanvas { canvas ->
                             val textPaint = android.graphics.Paint().apply {
                                 isAntiAlias = true
                                 textAlign = android.graphics.Paint.Align.CENTER
                                 textSize = counterTextSize
-                                color = VerticalIconOnDark.toArgb()
+                                color = onUnfilledColor.toArgb()
                                 typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                             }
                             val baseline = counterCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
@@ -1624,7 +1696,7 @@ private fun VerticalStreamPill(
                                 isAntiAlias = true
                                 textAlign = android.graphics.Paint.Align.CENTER
                                 textSize = labelTextSize
-                                color = VerticalIconOnDark.toArgb()
+                                color = onUnfilledColor.toArgb()
                                 typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                             }
                             val fittedLabel = android.text.TextUtils.ellipsize(
@@ -1671,13 +1743,14 @@ private fun VerticalStreamPill(
 
                 if (fillTop < pillH) {
                     clipRect(0f, fillTop, pillW, pillH) {
-                        val tintColor = if (isMuted) VerticalIconOffGray else VerticalIconOnWhite
+                        val onFillColor = if (lightMode) Color.White else VerticalIconOnWhite
+                        val tintColor = if (isMuted) VerticalIconOffGray else onFillColor
                         drawIntoCanvas { canvas ->
                             val textPaint = android.graphics.Paint().apply {
                                 isAntiAlias = true
                                 textAlign = android.graphics.Paint.Align.CENTER
                                 textSize = counterTextSize
-                                color = VerticalIconOnWhite.toArgb()
+                                color = onFillColor.toArgb()
                                 typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                             }
                             val baseline = counterCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
@@ -1688,7 +1761,7 @@ private fun VerticalStreamPill(
                                 isAntiAlias = true
                                 textAlign = android.graphics.Paint.Align.CENTER
                                 textSize = labelTextSize
-                                color = VerticalIconOnWhite.toArgb()
+                                color = onFillColor.toArgb()
                                 typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                             }
                             val fittedLabel = android.text.TextUtils.ellipsize(

@@ -51,6 +51,7 @@ object ShizukuManager {
     @Volatile var isPowerButtonPhysicallyDown: Boolean = false
     @Volatile var lastPowerDownTimeMs: Long = 0L
     @Volatile var onPowerKeyLongPress: (() -> Unit)? = null
+    @Volatile var onCustomHardwareKeyEvent: ((deviceName: String, scanCode: Int, isDown: Boolean, keyName: String?) -> Unit)? = null
     private var powerLongPressJob: Job? = null
 
     private var getEventJob: Job? = null
@@ -176,6 +177,20 @@ object ShizukuManager {
                         } else if (l.contains("UP")) {
                             isPowerButtonPhysicallyDown = false
                             powerLongPressJob?.cancel()
+                        }
+                    }
+                    val parts = l.trim().split(Regex("""\s+"""))
+                    if (parts.size >= 4 && parts[1] == "EV_KEY") {
+                        val dev = parts[0].removeSuffix(":")
+                        val keyName = parts[2]
+                        val isDown = parts[3].equals("DOWN", ignoreCase = true) || parts[3] == "1"
+                        if (keyName != "KEY_POWER" && keyName != "KEY_VOLUMEUP" && keyName != "KEY_VOLUMEDOWN") {
+                            val scan = if (keyName.startsWith("0x", ignoreCase = true)) {
+                                keyName.substring(2).toIntOrNull(16) ?: 0
+                            } else {
+                                0
+                            }
+                            onCustomHardwareKeyEvent?.invoke(dev, scan, isDown, keyName)
                         }
                     }
                 }

@@ -59,6 +59,7 @@ enum class PreviewTarget {
     POP_BOTH,
     POP_POWER,
     HUD,
+    THIN_HUD,
     DND,
     MODES,
     MIXER,
@@ -81,17 +82,17 @@ enum class EdgePopStyle(val displayName: String) {
 
 enum class HardwareTrigger(val displayName: String) {
     NONE("None"),
+    LONG_PRESS_POWER("Hold Power Button"),
     BOTH_VOLUME_SHORT("Both Volume Buttons"),
     DOUBLE_TAP_VOL_UP("Double-Tap Volume Up"),
     DOUBLE_TAP_VOL_DOWN("Double-Tap Volume Down"),
-    LONG_PRESS_POWER("Hold Power Button"),
     CUSTOM_BTN_SINGLE("Custom Button (Single Press)"),
     CUSTOM_BTN_DOUBLE("Custom Button (Double Press)"),
     CUSTOM_BTN_LONG("Custom Button (Long Press)")
 }
 
 enum class DndModeType(val displayName: String) {
-    SILENT_RING("Silent / Ring"),
+    SILENT_RING("Sound/Vibrate/Silent"),
     DND_ON_OFF("DND On / Off")
 }
 
@@ -259,6 +260,7 @@ data class NudgeSettings(
     val showSystemPanelWhenHudOff: Boolean = false,
     val isPerAppVolumeEnabled: Boolean = false,
     val perAppVolumeDisplayMode: String = "ALONGSIDE_SLIDER",
+    val showThinPerAppVolumeHud: Boolean = true,
     val updateCheckFrequency: String = "DAILY",
     val lastUpdateCheckTimestampMs: Long = 0L,
     val cachedLatestReleaseJson: String = "",
@@ -286,6 +288,8 @@ data class NudgeSettings(
     val floatingMode: Boolean = false,
     val hudEdgeInsetDp: Float = 0f,
     val enableThinVolumeHud: Boolean = true,
+    val thinHudEdgeInsetDp: Float = 6f,
+    val thinHudOnLandscapeFullscreen: Boolean = false,
     val hapticsEnabled: Boolean = true,
     val edgePopHapticsEnabled: Boolean = true,
     val volumeSliderHapticsEnabled: Boolean = true,
@@ -309,6 +313,9 @@ data class NudgeSettings(
 
     val enableDndToggle: Boolean = true,
     val dndModeType: DndModeType = DndModeType.SILENT_RING,
+    val dndIncludeSound: Boolean = true,
+    val dndIncludeVibrate: Boolean = true,
+    val dndIncludeSilent: Boolean = true,
     val useShizukuForDnd: Boolean = false,
     val dndTrigger: HardwareTrigger = HardwareTrigger.NONE,
     val dndDoubleTapTimeoutMs: Long = 250L,
@@ -441,6 +448,9 @@ data class NudgeSettings(
         const val MAX_HUD_CORNER_RADIUS_DP = 32f
         const val MIN_HUD_EDGE_INSET_DP = 0f
         const val MAX_HUD_EDGE_INSET_DP = 48f
+        const val DEFAULT_THIN_HUD_EDGE_INSET_DP = 6f
+        const val MIN_THIN_HUD_EDGE_INSET_DP = 0f
+        const val MAX_THIN_HUD_EDGE_INSET_DP = 48f
         const val MIN_AUTO_HIDE_MS = 250L
         const val MAX_AUTO_HIDE_MS = 5000L
         const val AUTO_HIDE_STEP_MS = 50L
@@ -564,6 +574,9 @@ data class NudgeSettings(
 
         fun clampHudEdgeInset(value: Float): Float =
             value.coerceIn(MIN_HUD_EDGE_INSET_DP, MAX_HUD_EDGE_INSET_DP)
+
+        fun clampThinHudEdgeInset(value: Float): Float =
+            value.coerceIn(MIN_THIN_HUD_EDGE_INSET_DP, MAX_THIN_HUD_EDGE_INSET_DP)
 
         fun clampAutoHideMs(value: Long): Long =
             value.coerceIn(MIN_AUTO_HIDE_MS, MAX_AUTO_HIDE_MS)

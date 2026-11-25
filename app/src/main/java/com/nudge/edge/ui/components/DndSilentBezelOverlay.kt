@@ -1,5 +1,6 @@
 package com.nudge.edge.ui.components
 
+import android.media.AudioManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -35,6 +36,8 @@ import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.DoNotDisturbOn
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsOff
+import androidx.compose.material.icons.rounded.Vibration
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -77,6 +80,7 @@ import androidx.compose.ui.unit.sp
 import com.nudge.edge.model.DndModeType
 import com.nudge.edge.model.NudgeIcons
 import com.nudge.edge.model.ScreenEdge
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -229,6 +233,13 @@ fun buildOrganicBezelPath(
     }
 }
 
+data class DndSlotItem(
+    val id: Int,
+    val label: String,
+    val icon: ImageVector,
+    val color: Color
+)
+
 @Composable
 fun DndSilentBezelOverlay(
     screenEdge: ScreenEdge,
@@ -236,8 +247,13 @@ fun DndSilentBezelOverlay(
     overlayHeightDp: Float,
     modeType: DndModeType,
     isSilentOrDndActive: Boolean,
+    currentRingerMode: Int = AudioManager.RINGER_MODE_NORMAL,
+    includeSound: Boolean = true,
+    includeVibrate: Boolean = true,
+    includeSilent: Boolean = true,
     isVisible: Boolean,
     onSelectState: (Boolean) -> Unit = {},
+    onSelectRingerMode: (Int) -> Unit = {},
     onPauseAutoHideTimer: () -> Unit = {},
     onRestartAutoHideTimer: () -> Unit = {},
     iconSizeDp: Float = 24f,
@@ -288,12 +304,47 @@ fun DndSilentBezelOverlay(
     }
 
     val currentOnSelectState by rememberUpdatedState(onSelectState)
+    val currentOnSelectRingerMode by rememberUpdatedState(onSelectRingerMode)
     val currentIsSilentOrDndActive by rememberUpdatedState(isSilentOrDndActive)
     val currentIsVisible by rememberUpdatedState(isVisible)
     val currentOnPauseAutoHideTimer by rememberUpdatedState(onPauseAutoHideTimer)
     val currentOnRestartAutoHideTimer by rememberUpdatedState(onRestartAutoHideTimer)
 
-    val focusProgress = remember { Animatable(if (isSilentOrDndActive) 0f else 1f) }
+    val slots = remember(modeType, includeSound, includeVibrate, includeSilent) {
+        if (modeType == DndModeType.DND_ON_OFF) {
+            listOf(
+                DndSlotItem(id = 1, label = "DND ON", icon = Icons.Rounded.Bedtime, color = Color(0xFF7D7AFF)),
+                DndSlotItem(id = 0, label = "DND OFF", icon = Icons.Rounded.Bedtime, color = Color.White)
+            )
+        } else {
+            buildList {
+                if (includeSound) {
+                    add(DndSlotItem(id = AudioManager.RINGER_MODE_NORMAL, label = "SOUND", icon = Icons.Rounded.Notifications, color = Color.White))
+                }
+                if (includeVibrate) {
+                    add(DndSlotItem(id = AudioManager.RINGER_MODE_VIBRATE, label = "VIBRATE", icon = Icons.Rounded.Vibration, color = Color(0xFFFF9F0A)))
+                }
+                if (includeSilent) {
+                    add(DndSlotItem(id = AudioManager.RINGER_MODE_SILENT, label = "SILENT", icon = Icons.Rounded.NotificationsOff, color = ActiveSilentRed))
+                }
+            }.ifEmpty {
+                listOf(
+                    DndSlotItem(id = AudioManager.RINGER_MODE_NORMAL, label = "SOUND", icon = Icons.Rounded.Notifications, color = Color.White),
+                    DndSlotItem(id = AudioManager.RINGER_MODE_VIBRATE, label = "VIBRATE", icon = Icons.Rounded.Vibration, color = Color(0xFFFF9F0A)),
+                    DndSlotItem(id = AudioManager.RINGER_MODE_SILENT, label = "SILENT", icon = Icons.Rounded.NotificationsOff, color = ActiveSilentRed)
+                )
+            }
+        }
+    }
+
+    val activeSlotIndex = if (modeType == DndModeType.DND_ON_OFF) {
+        if (isSilentOrDndActive) 0 else 1
+    } else {
+        val found = slots.indexOfFirst { it.id == currentRingerMode }
+        if (found >= 0) found else if (isSilentOrDndActive) (slots.size - 1) else 0
+    }
+
+    val focusProgress = remember { Animatable(activeSlotIndex.toFloat()) }
     var isFingerTouchingPanel by remember { mutableStateOf(false) }
     val isPanelBusy = isFingerTouchingPanel || focusProgress.isRunning
 
@@ -305,40 +356,35 @@ fun DndSilentBezelOverlay(
         }
     }
 
-    LaunchedEffect(isSilentOrDndActive) {
-        val target = if (isSilentOrDndActive) 0f else 1f
-        if (focusProgress.targetValue != target) {
-            focusProgress.animateTo(
-                targetValue = target,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioNoBouncy,
-                    stiffness = Spring.StiffnessMediumLow
-                )
-            )
+    LaunchedEffect(activeSlotIndex, isVisible) {
+        if (!isFingerTouchingPanel) {
+            val target = activeSlotIndex.toFloat()
+            if (isVisible) {
+                if (slideAnim.value < 0.1f) {
+                    focusProgress.snapTo(target)
+                } else if (focusProgress.targetValue != target) {
+                    focusProgress.animateTo(
+                        targetValue = target,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMediumLow
+                        )
+                    )
+                }
+            } else {
+                focusProgress.snapTo(target)
+            }
         }
     }
 
-    val animatedFocus = focusProgress.value.coerceIn(0f, 1f)
+    val maxSlotCount = (slots.size - 1).toFloat().coerceAtLeast(1f)
+    val animatedFocus = focusProgress.value.coerceIn(0f, maxSlotCount)
     val centerCoord = if (isVerticalEdge) heightPx / 2f else widthPx / 2f
     val maxSlotSpacing = (if (isVerticalEdge) heightPx else widthPx) * 0.36f
     val slotSpacing = with(density) { unfocusedOffsetDp.dp.toPx() }.coerceAtMost(maxSlotSpacing)
 
-    val slot0Coord = centerCoord + ((0f - animatedFocus) * slotSpacing)
-    val slot1Coord = centerCoord + ((1f - animatedFocus) * slotSpacing)
-
-    val activeSlot0Color = if (modeType == DndModeType.DND_ON_OFF) Color(0xFF7D7AFF) else ActiveSilentRed
-    val slot0Color = activeSlot0Color
-    val slot0Scale = 0.82f + 0.18f * (1f - animatedFocus)
-    val slot0Alpha = 0.45f + 0.55f * (1f - animatedFocus)
-
-    val slot1Scale = 0.82f + 0.18f * animatedFocus
-    val slot1Alpha = 0.45f + 0.55f * animatedFocus
-    val slot1Color = Color.White
-
-    val labelText = when (modeType) {
-        DndModeType.SILENT_RING -> if (isSilentOrDndActive) "SILENT" else "RING"
-        DndModeType.DND_ON_OFF -> if (isSilentOrDndActive) "DND ON" else "DND OFF"
-    }
+    val displayedIndex = animatedFocus.roundToInt().coerceIn(0, slots.size - 1)
+    val labelText = slots[displayedIndex].label
 
     val housingPath = remember { Path() }
     val animProgress = slideAnim.value.coerceIn(0f, 1f)
@@ -424,9 +470,11 @@ fun DndSilentBezelOverlay(
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 isFingerTouchingPanel = true
                                 currentOnPauseAutoHideTimer()
-                                var totalDelta = 0f
-                                var lastPos = down.position
+                                val startFocus = focusProgress.value
+                                var isDrag = false
+                                val touchSlopPx = with(density) { 8.dp.toPx() }
                                 var completedNaturally = false
+                                var dragJob: Job? = null
                                 try {
                                     while (true) {
                                         val event = awaitPointerEvent()
@@ -435,46 +483,70 @@ fun DndSilentBezelOverlay(
                                             completedNaturally = true
                                             break
                                         }
-                                        val delta = change.position.y - lastPos.y
-                                        lastPos = change.position
-                                        totalDelta += delta
-                                        if (delta != 0f) {
+                                        val totalDelta = change.position.y - down.position.y
+                                        if (!isDrag && kotlin.math.abs(totalDelta) >= touchSlopPx) {
+                                            isDrag = true
+                                        }
+                                        if (isDrag) {
                                             change.consume()
-                                            coroutineScope.launch {
-                                                val stepDelta = -delta / slotSpacing
-                                                focusProgress.snapTo(
-                                                    (focusProgress.value + stepDelta).coerceIn(0f, 1f)
-                                                )
+                                            val stepDelta = -totalDelta / slotSpacing
+                                            val targetProgress = (startFocus + stepDelta).coerceIn(0f, maxSlotCount)
+                                            dragJob?.cancel()
+                                            dragJob = coroutineScope.launch {
+                                                focusProgress.snapTo(targetProgress)
                                             }
                                         }
                                     }
                                 } finally {
+                                    dragJob?.cancel()
                                     isFingerTouchingPanel = false
                                 }
 
-                                val touchSlopPx = with(density) { 8.dp.toPx() }
-                                val isTap = kotlin.math.abs(totalDelta) < touchSlopPx
-                                val targetSlot = if (completedNaturally) {
-                                    if (isTap) {
-                                        if (down.position.y < centerCoord) 0 else 1
-                                    } else {
-                                        if (focusProgress.value < 0.5f) 0 else 1
+                                if (!isDrag) {
+                                    val targetSlot = slots.indices.minByOrNull { idx ->
+                                        val coord = centerCoord + ((idx.toFloat() - focusProgress.value) * slotSpacing)
+                                        kotlin.math.abs(down.position.y - coord)
+                                    } ?: 0
+                                    val selected = slots[targetSlot]
+                                    if (completedNaturally && currentIsVisible) {
+                                        if (modeType == DndModeType.DND_ON_OFF) {
+                                            currentOnSelectState(selected.id == 1)
+                                        } else {
+                                            currentOnSelectRingerMode(selected.id)
+                                        }
+                                        coroutineScope.launch {
+                                            focusProgress.animateTo(
+                                                targetValue = targetSlot.toFloat(),
+                                                animationSpec = spring(
+                                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                                    stiffness = Spring.StiffnessMediumLow
+                                                )
+                                            )
+                                        }
                                     }
                                 } else {
-                                    if (currentIsSilentOrDndActive) 0 else 1
-                                }
-                                val newState = (targetSlot == 0)
-                                if (completedNaturally && currentIsVisible) {
-                                    currentOnSelectState(newState)
-                                }
-                                coroutineScope.launch {
-                                    focusProgress.animateTo(
-                                        targetValue = targetSlot.toFloat(),
-                                        animationSpec = spring(
-                                            dampingRatio = Spring.DampingRatioNoBouncy,
-                                            stiffness = Spring.StiffnessMediumLow
+                                    val targetSlot = if (completedNaturally) {
+                                        focusProgress.value.roundToInt().coerceIn(0, slots.size - 1)
+                                    } else {
+                                        activeSlotIndex
+                                    }
+                                    val selected = slots[targetSlot]
+                                    if (completedNaturally && currentIsVisible) {
+                                        if (modeType == DndModeType.DND_ON_OFF) {
+                                            currentOnSelectState(selected.id == 1)
+                                        } else {
+                                            currentOnSelectRingerMode(selected.id)
+                                        }
+                                    }
+                                    coroutineScope.launch {
+                                        focusProgress.animateTo(
+                                            targetValue = targetSlot.toFloat(),
+                                            animationSpec = spring(
+                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                                stiffness = Spring.StiffnessMediumLow
+                                            )
                                         )
-                                    )
+                                    }
                                 }
                             }
                         }
@@ -510,68 +582,28 @@ fun DndSilentBezelOverlay(
                                 drawRect(brush = maskBrush, blendMode = BlendMode.DstIn)
                             }
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .offset { IntOffset(0, (slot0Coord - iconHalfBoxPx).roundToInt()) }
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) {
-                                    currentOnSelectState(true)
-                                    coroutineScope.launch {
-                                        focusProgress.animateTo(
-                                            targetValue = 0f,
-                                            animationSpec = spring(
-                                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                                stiffness = Spring.StiffnessMediumLow
-                                            )
-                                        )
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (modeType == DndModeType.DND_ON_OFF) Icons.Rounded.Bedtime else Icons.Rounded.NotificationsOff,
-                                contentDescription = null,
-                                tint = slot0Color,
-                                modifier = Modifier
-                                    .scale(slot0Scale)
-                                    .alpha(slot0Alpha)
-                                    .size(effectiveIconSizeDp)
-                            )
-                        }
+                        slots.forEachIndexed { idx, slotItem ->
+                            val dist = kotlin.math.abs(idx.toFloat() - animatedFocus)
+                            val scale = (1f - dist * 0.18f).coerceIn(0.72f, 1f)
+                            val alpha = (1f - dist * 0.55f).coerceIn(0.35f, 1f)
+                            val coord = centerCoord + ((idx.toFloat() - animatedFocus) * slotSpacing)
 
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .offset { IntOffset(0, (slot1Coord - iconHalfBoxPx).roundToInt()) }
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) {
-                                    currentOnSelectState(false)
-                                    coroutineScope.launch {
-                                        focusProgress.animateTo(
-                                            targetValue = 1f,
-                                            animationSpec = spring(
-                                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                                stiffness = Spring.StiffnessMediumLow
-                                            )
-                                        )
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (modeType == DndModeType.DND_ON_OFF) Icons.Rounded.Bedtime else Icons.Rounded.Notifications,
-                                contentDescription = null,
-                                tint = slot1Color,
+                            Box(
                                 modifier = Modifier
-                                    .scale(slot1Scale)
-                                    .alpha(slot1Alpha)
-                                    .size(effectiveIconSizeDp)
-                            )
+                                    .fillMaxWidth()
+                                    .offset { IntOffset(0, (coord - iconHalfBoxPx).roundToInt()) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = slotItem.icon,
+                                    contentDescription = null,
+                                    tint = slotItem.color,
+                                    modifier = Modifier
+                                        .scale(scale)
+                                        .alpha(alpha)
+                                        .size(effectiveIconSizeDp)
+                                )
+                            }
                         }
                     }
                 }
@@ -608,9 +640,11 @@ fun DndSilentBezelOverlay(
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 isFingerTouchingPanel = true
                                 currentOnPauseAutoHideTimer()
-                                var totalDelta = 0f
-                                var lastPos = down.position
+                                val startFocus = focusProgress.value
+                                var isDrag = false
+                                val touchSlopPx = with(density) { 8.dp.toPx() }
                                 var completedNaturally = false
+                                var dragJob: Job? = null
                                 try {
                                     while (true) {
                                         val event = awaitPointerEvent()
@@ -619,46 +653,70 @@ fun DndSilentBezelOverlay(
                                             completedNaturally = true
                                             break
                                         }
-                                        val delta = change.position.x - lastPos.x
-                                        lastPos = change.position
-                                        totalDelta += delta
-                                        if (delta != 0f) {
+                                        val totalDelta = change.position.x - down.position.x
+                                        if (!isDrag && kotlin.math.abs(totalDelta) >= touchSlopPx) {
+                                            isDrag = true
+                                        }
+                                        if (isDrag) {
                                             change.consume()
-                                            coroutineScope.launch {
-                                                val stepDelta = -delta / slotSpacing
-                                                focusProgress.snapTo(
-                                                    (focusProgress.value + stepDelta).coerceIn(0f, 1f)
-                                                )
+                                            val stepDelta = -totalDelta / slotSpacing
+                                            val targetProgress = (startFocus + stepDelta).coerceIn(0f, maxSlotCount)
+                                            dragJob?.cancel()
+                                            dragJob = coroutineScope.launch {
+                                                focusProgress.snapTo(targetProgress)
                                             }
                                         }
                                     }
                                 } finally {
+                                    dragJob?.cancel()
                                     isFingerTouchingPanel = false
                                 }
 
-                                val touchSlopPx = with(density) { 8.dp.toPx() }
-                                val isTap = kotlin.math.abs(totalDelta) < touchSlopPx
-                                val targetSlot = if (completedNaturally) {
-                                    if (isTap) {
-                                        if (down.position.x < centerCoord) 0 else 1
-                                    } else {
-                                        if (focusProgress.value < 0.5f) 0 else 1
+                                if (!isDrag) {
+                                    val targetSlot = slots.indices.minByOrNull { idx ->
+                                        val coord = centerCoord + ((idx.toFloat() - focusProgress.value) * slotSpacing)
+                                        kotlin.math.abs(down.position.x - coord)
+                                    } ?: 0
+                                    val selected = slots[targetSlot]
+                                    if (completedNaturally && currentIsVisible) {
+                                        if (modeType == DndModeType.DND_ON_OFF) {
+                                            currentOnSelectState(selected.id == 1)
+                                        } else {
+                                            currentOnSelectRingerMode(selected.id)
+                                        }
+                                        coroutineScope.launch {
+                                            focusProgress.animateTo(
+                                                targetValue = targetSlot.toFloat(),
+                                                animationSpec = spring(
+                                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                                    stiffness = Spring.StiffnessMediumLow
+                                                )
+                                            )
+                                        }
                                     }
                                 } else {
-                                    if (currentIsSilentOrDndActive) 0 else 1
-                                }
-                                val newState = (targetSlot == 0)
-                                if (completedNaturally && currentIsVisible) {
-                                    currentOnSelectState(newState)
-                                }
-                                coroutineScope.launch {
-                                    focusProgress.animateTo(
-                                        targetValue = targetSlot.toFloat(),
-                                        animationSpec = spring(
-                                            dampingRatio = Spring.DampingRatioNoBouncy,
-                                            stiffness = Spring.StiffnessMediumLow
+                                    val targetSlot = if (completedNaturally) {
+                                        focusProgress.value.roundToInt().coerceIn(0, slots.size - 1)
+                                    } else {
+                                        activeSlotIndex
+                                    }
+                                    val selected = slots[targetSlot]
+                                    if (completedNaturally && currentIsVisible) {
+                                        if (modeType == DndModeType.DND_ON_OFF) {
+                                            currentOnSelectState(selected.id == 1)
+                                        } else {
+                                            currentOnSelectRingerMode(selected.id)
+                                        }
+                                    }
+                                    coroutineScope.launch {
+                                        focusProgress.animateTo(
+                                            targetValue = targetSlot.toFloat(),
+                                            animationSpec = spring(
+                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                                stiffness = Spring.StiffnessMediumLow
+                                            )
                                         )
-                                    )
+                                    }
                                 }
                             }
                         }
@@ -694,68 +752,28 @@ fun DndSilentBezelOverlay(
                                 drawRect(brush = maskBrush, blendMode = BlendMode.DstIn)
                             }
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .offset { IntOffset((slot0Coord - iconHalfBoxPx).roundToInt(), 0) }
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) {
-                                    currentOnSelectState(true)
-                                    coroutineScope.launch {
-                                        focusProgress.animateTo(
-                                            targetValue = 0f,
-                                            animationSpec = spring(
-                                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                                stiffness = Spring.StiffnessMediumLow
-                                            )
-                                        )
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (modeType == DndModeType.DND_ON_OFF) Icons.Rounded.Bedtime else Icons.Rounded.NotificationsOff,
-                                contentDescription = null,
-                                tint = slot0Color,
-                                modifier = Modifier
-                                    .scale(slot0Scale)
-                                    .alpha(slot0Alpha)
-                                    .size(effectiveIconSizeDp)
-                            )
-                        }
+                        slots.forEachIndexed { idx, slotItem ->
+                            val dist = kotlin.math.abs(idx.toFloat() - animatedFocus)
+                            val scale = (1f - dist * 0.18f).coerceIn(0.72f, 1f)
+                            val alpha = (1f - dist * 0.55f).coerceIn(0.35f, 1f)
+                            val coord = centerCoord + ((idx.toFloat() - animatedFocus) * slotSpacing)
 
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .offset { IntOffset((slot1Coord - iconHalfBoxPx).roundToInt(), 0) }
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) {
-                                    currentOnSelectState(false)
-                                    coroutineScope.launch {
-                                        focusProgress.animateTo(
-                                            targetValue = 1f,
-                                            animationSpec = spring(
-                                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                                stiffness = Spring.StiffnessMediumLow
-                                            )
-                                        )
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (modeType == DndModeType.DND_ON_OFF) Icons.Rounded.Bedtime else Icons.Rounded.Notifications,
-                                contentDescription = null,
-                                tint = slot1Color,
+                            Box(
                                 modifier = Modifier
-                                    .scale(slot1Scale)
-                                    .alpha(slot1Alpha)
-                                    .size(effectiveIconSizeDp)
-                            )
+                                    .fillMaxHeight()
+                                    .offset { IntOffset((coord - iconHalfBoxPx).roundToInt(), 0) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = slotItem.icon,
+                                    contentDescription = null,
+                                    tint = slotItem.color,
+                                    modifier = Modifier
+                                        .scale(scale)
+                                        .alpha(alpha)
+                                        .size(effectiveIconSizeDp)
+                                )
+                            }
                         }
                     }
                 }

@@ -22,9 +22,8 @@ class DndController(
     companion object {
         fun isDndActive(notificationManager: NotificationManager, context: Context? = null): Boolean {
             val filter = notificationManager.currentInterruptionFilter
-            if (filter != NotificationManager.INTERRUPTION_FILTER_ALL &&
-                filter != NotificationManager.INTERRUPTION_FILTER_UNKNOWN) {
-                return true
+            if (filter != NotificationManager.INTERRUPTION_FILTER_UNKNOWN) {
+                return filter != NotificationManager.INTERRUPTION_FILTER_ALL
             }
             if (context != null) {
                 val zen = runCatching {
@@ -42,34 +41,32 @@ class DndController(
     }
 
     suspend fun setDndState(enableDnd: Boolean, useShizukuForDnd: Boolean): Boolean = withContext(Dispatchers.IO) {
-        if (useShizukuForDnd) {
-            executeShizukuDnd(enableDnd)
-        } else {
-            val normalSuccess = executeNormalDnd(enableDnd)
-            delay(100L)
-            if (isDndActive(notificationManager, context) != enableDnd) {
-                val isShizukuReady = ShizukuManager.status.value == ShizukuStatus.CONNECTED_AND_ACTIVE
-                if (isShizukuReady) {
-                    executeShizukuDnd(enableDnd)
-                } else {
-                    normalSuccess
-                }
-            } else {
-                normalSuccess
+        val isShizukuReady = (ShizukuManager.status.value == ShizukuStatus.CONNECTED_AND_ACTIVE || ShizukuInputClient.isConnected.value)
+        if (useShizukuForDnd && isShizukuReady) {
+            val shizukuSuccess = executeShizukuDnd(enableDnd)
+            if (shizukuSuccess) {
+                return@withContext true
             }
         }
+        executeNormalDnd(enableDnd)
     }
 
     private suspend fun executeShizukuDnd(enableDnd: Boolean): Boolean {
+        val isShizukuReady = (ShizukuManager.status.value == ShizukuStatus.CONNECTED_AND_ACTIVE || ShizukuInputClient.isConnected.value)
+        if (!isShizukuReady) {
+            return executeNormalDnd(enableDnd)
+        }
         var success = false
         if (ShizukuInputClient.isConnected.value) {
             success = ShizukuInputClient.setDndEnabled(enableDnd)
         }
         if (!success) {
             val arg = if (enableDnd) "priority" else "off"
-            runCatching {
+            val res = runCatching {
                 ShizukuManager.runCommand("cmd notification set_dnd $arg")
                 ShizukuManager.runCommand("settings put global zen_mode ${if (enableDnd) "1" else "0"}")
+            }
+            if (res.isSuccess) {
                 success = true
             }
         }
@@ -85,19 +82,13 @@ class DndController(
             return true
         }
 
-        val hasPolicyAccess = notificationManager.isNotificationPolicyAccessGranted
-        if (hasPolicyAccess) {
-            return executeNormalDnd(enableDnd)
-        } else {
-            showToastOnMain("Shizuku is not connected or authorized for DND. Please start Shizuku or grant DND access.")
-            return false
-        }
+        return executeNormalDnd(enableDnd)
     }
 
     private suspend fun executeNormalDnd(enableDnd: Boolean): Boolean {
         val hasPolicyAccess = notificationManager.isNotificationPolicyAccessGranted
         if (!hasPolicyAccess) {
-            val isShizukuReady = ShizukuManager.status.value == ShizukuStatus.CONNECTED_AND_ACTIVE
+            val isShizukuReady = (ShizukuManager.status.value == ShizukuStatus.CONNECTED_AND_ACTIVE || ShizukuInputClient.isConnected.value)
             if (isShizukuReady) {
                 return executeShizukuDnd(enableDnd)
             }

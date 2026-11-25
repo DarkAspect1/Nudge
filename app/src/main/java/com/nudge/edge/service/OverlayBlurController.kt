@@ -113,20 +113,38 @@ object OverlayBlurController {
         view: View,
         blurRadiusPx: Int,
         cornerRadiusPx: Float,
-        isHudVisible: Boolean
+        isHudVisible: Boolean,
+        widthPx: Float = 0f,
+        heightPx: Float = 0f
     ) {
         if (!isPathAAvailable) return
         val method = viewSemSetBlurInfoMethod ?: return
-        if (!isHudVisible || blurRadiusPx <= 0 || !view.isAttachedToWindow || view.width <= 0 || view.height <= 0 || isSamsungReduceTransparencyEnabled(view.context)) {
+        if (!isHudVisible || blurRadiusPx <= 0 || isSamsungReduceTransparencyEnabled(view.context)) {
             runCatching { method.invoke(view, null) }
             return
+        }
+
+        val effW = if (view.width > 0) view.width.toFloat() else widthPx
+        val effH = if (view.height > 0) view.height.toFloat() else heightPx
+
+        val maxCorner = if (effW > 0f && effH > 0f) minOf(effW, effH) / 2f else cornerRadiusPx
+        val clampedCorner = cornerRadiusPx.coerceAtMost(maxCorner)
+
+        if (clampedCorner > 0f) {
+            view.outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(v: View, outline: android.graphics.Outline) {
+                    val w = if (v.width > 0) v.width else effW.toInt().coerceAtLeast(1)
+                    val h = if (v.height > 0) v.height else effH.toInt().coerceAtLeast(1)
+                    outline.setRoundRect(0, 0, w, h, clampedCorner)
+                }
+            }
+            view.clipToOutline = true
         }
 
         runCatching {
             val builder = semBuilderConstructor?.newInstance(0) ?: return
             semSetRadiusMethod?.invoke(builder, blurRadiusPx)
             semSetBackgroundColorMethod?.invoke(builder, Color.TRANSPARENT)
-            val clampedCorner = cornerRadiusPx.coerceAtMost(minOf(view.width, view.height) / 2f)
             if (semSetCornerRadiusMethod != null) {
                 semSetCornerRadiusMethod?.invoke(builder, clampedCorner)
             } else if (semSetCornerRadius4Method != null) {
@@ -136,6 +154,28 @@ object OverlayBlurController {
             method.invoke(view, info)
         }.onFailure {
             runCatching { method.invoke(view, null) }
+        }
+
+        if (view.width <= 0 || view.height <= 0) {
+            val listener = object : View.OnLayoutChangeListener {
+                override fun onLayoutChange(
+                    v: View,
+                    left: Int,
+                    top: Int,
+                    right: Int,
+                    bottom: Int,
+                    oldLeft: Int,
+                    oldTop: Int,
+                    oldRight: Int,
+                    oldBottom: Int
+                ) {
+                    if (v.width > 0 && v.height > 0) {
+                        v.removeOnLayoutChangeListener(this)
+                        applySamsungTrackBlur(v, blurRadiusPx, cornerRadiusPx, isHudVisible, v.width.toFloat(), v.height.toFloat())
+                    }
+                }
+            }
+            view.addOnLayoutChangeListener(listener)
         }
     }
 

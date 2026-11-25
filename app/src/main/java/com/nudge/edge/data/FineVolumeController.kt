@@ -2,6 +2,7 @@ package com.nudge.edge.data
 
 import android.content.Context
 import android.media.AudioManager
+import android.os.Build
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 
@@ -53,8 +54,13 @@ class FineVolumeController(context: Context) {
 
     fun getEffectiveMinIndex(streamType: Int): Int {
         val maxIdx = getStreamMaxIndex(streamType)
-        return if (streamType == AudioManager.STREAM_VOICE_CALL) {
-            1.coerceAtMost(maxIdx)
+        return if (streamType == AudioManager.STREAM_VOICE_CALL || streamType == 6) {
+            val sysMin = runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    audioManager.getStreamMinVolume(streamType)
+                } else 1
+            }.getOrDefault(1)
+            sysMin.coerceAtLeast(0).coerceAtMost(maxIdx)
         } else {
             getStreamMinIndex(streamType)
         }
@@ -63,26 +69,16 @@ class FineVolumeController(context: Context) {
     fun getStreamMinNormalizedFraction(streamType: Int): Float {
         val maxIdx = getStreamMaxIndex(streamType)
         if (maxIdx <= 0) return 0f
-
-        if (streamType == AudioManager.STREAM_VOICE_CALL) {
-            val effMin = 1.coerceAtMost(maxIdx)
-            return (effMin.toFloat() / maxIdx.toFloat()).coerceIn(0f, 1f)
-        }
-        return 0f
+        val effMin = getEffectiveMinIndex(streamType)
+        return (effMin.toFloat() / maxIdx.toFloat()).coerceIn(0f, 1f)
     }
 
     fun getStreamDisplayVolumeCount(streamType: Int, normalizedFraction: Float): Int {
         val maxIdx = getStreamMaxIndex(streamType)
         val fineMax = maxIdx * FINE_MULTIPLIER
         if (fineMax <= 0) return 0
-        val clamped = normalizedFraction.coerceIn(0f, 1f)
-
-        if (streamType == AudioManager.STREAM_VOICE_CALL) {
-            val effMin = getEffectiveMinIndex(streamType)
-            val minFine = effMin * FINE_MULTIPLIER
-            return (clamped * fineMax).roundToInt().coerceIn(minFine, fineMax)
-        }
-        return (clamped * fineMax).roundToInt().coerceIn(0, fineMax)
+        val effMin = getEffectiveMinIndex(streamType) * FINE_MULTIPLIER
+        return (normalizedFraction.coerceIn(0f, 1f) * fineMax).roundToInt().coerceIn(effMin, fineMax)
     }
 
     fun stepStreamWithSystem(streamType: Int, direction: Int): Float {
@@ -120,17 +116,15 @@ class FineVolumeController(context: Context) {
             val clampedIdx = currentIdx.coerceIn(effMin, maxIdx)
             val fineMax = maxIdx * FINE_MULTIPLIER
             val cachedFine = cachedFineVolumeByStream[streamType]
-            if (cachedFine != null) {
+            if (cachedFine != null && cachedFine in (effMin * FINE_MULTIPLIER)..fineMax) {
                 val expectedCoarse = (cachedFine.toFloat() / FINE_MULTIPLIER.toFloat()).roundToInt().coerceIn(effMin, maxIdx)
                 if (expectedCoarse == clampedIdx) {
                     return (cachedFine.toFloat() / fineMax.toFloat()).coerceIn(0f, 1f)
                 }
             }
-
-            val rawFraction = (clampedIdx.toFloat() / maxIdx.toFloat()).coerceIn(0f, 1f)
-            val targetFine = (rawFraction * fineMax).roundToInt().coerceIn(effMin * FINE_MULTIPLIER, fineMax)
-            cachedFineVolumeByStream[streamType] = targetFine
-            return (targetFine.toFloat() / fineMax.toFloat()).coerceIn(0f, 1f)
+            val fineFromCoarse = (clampedIdx * FINE_MULTIPLIER).coerceIn(effMin * FINE_MULTIPLIER, fineMax)
+            cachedFineVolumeByStream[streamType] = fineFromCoarse
+            return (fineFromCoarse.toFloat() / fineMax.toFloat()).coerceIn(0f, 1f)
         }
 
         if ((streamType == AudioManager.STREAM_RING || streamType == AudioManager.STREAM_NOTIFICATION) &&
@@ -203,20 +197,15 @@ class FineVolumeController(context: Context) {
 
         if (streamType == AudioManager.STREAM_VOICE_CALL) {
             val effMin = getEffectiveMinIndex(streamType)
-            val minFine = effMin * FINE_MULTIPLIER
-            val constrainedFine = targetFine.coerceIn(minFine, fineMax)
-            cachedFineVolumeByStream[streamType] = constrainedFine
+            val fineMin = effMin * FINE_MULTIPLIER
+            val targetCallFine = (clamped * fineMax).roundToInt().coerceIn(fineMin, fineMax)
+            cachedFineVolumeByStream[streamType] = targetCallFine
 
-            val targetCoarse = (constrainedFine.toFloat() / FINE_MULTIPLIER.toFloat())
-                .coerceIn(effMin.toFloat(), maxIdx.toFloat())
-            
+            val targetCoarse = (targetCallFine.toFloat() / FINE_MULTIPLIER.toFloat()).roundToInt().coerceIn(effMin, maxIdx)
             runCatching {
-                audioManager.setStreamVolume(streamType, targetCoarse.roundToInt().coerceIn(effMin, maxIdx), 0)
+                audioManager.setStreamVolume(streamType, targetCoarse, 0)
             }
-            if (setFineVolume != null) {
-                runCatching { setFineVolume?.invoke(audioManager, streamType, constrainedFine, 0) }
-            }
-            return (constrainedFine.toFloat() / fineMax.toFloat()).coerceIn(0f, 1f)
+            return (targetCallFine.toFloat() / fineMax.toFloat()).coerceIn(0f, 1f)
         }
 
         if (targetFine <= 0) {
@@ -253,6 +242,11 @@ class FineVolumeController(context: Context) {
         val maxIdx = getStreamMaxIndex(streamType)
         val minIdx = getStreamMinIndex(streamType)
         val effMin = getEffectiveMinIndex(streamType)
+        if (streamType == AudioManager.STREAM_VOICE_CALL) {
+            val targetCoarse = (fine.toFloat() / FINE_MULTIPLIER.toFloat()).roundToInt().coerceIn(effMin, maxIdx)
+            runCatching { audioManager.setStreamVolume(streamType, targetCoarse, 0) }
+            return
+        }
         val targetCoarse = (fine.toFloat() / FINE_MULTIPLIER.toFloat()).roundToInt().coerceIn(effMin, maxIdx)
         runCatching { audioManager.setStreamVolume(streamType, targetCoarse, 0) }
         if (setFineVolume != null && streamType == AudioManager.STREAM_MUSIC) {

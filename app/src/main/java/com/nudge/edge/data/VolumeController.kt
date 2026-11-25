@@ -359,13 +359,11 @@ class VolumeController(context: Context) {
 
     fun getStreamMin(streamType: Int): Int {
         val safeStream = if (streamType == STREAM_BLUETOOTH_SCO) AudioManager.STREAM_VOICE_CALL else streamType
-        if (safeStream == AudioManager.STREAM_VOICE_CALL) {
-            return 1
-        }
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            runCatching { audioManager.getStreamMinVolume(safeStream) }.getOrDefault(0)
+            val sysMin = runCatching { audioManager.getStreamMinVolume(safeStream) }.getOrDefault(if (safeStream == AudioManager.STREAM_VOICE_CALL) 1 else 0)
+            if (safeStream == AudioManager.STREAM_VOICE_CALL) sysMin.coerceAtLeast(1) else sysMin
         } else {
-            0
+            if (safeStream == AudioManager.STREAM_VOICE_CALL) 1 else 0
         }
     }
 
@@ -512,11 +510,6 @@ class VolumeController(context: Context) {
             }
             if (result.isFailure) {
                 return current
-            }
-        }
-        if (safeStream == AudioManager.STREAM_VOICE_CALL) {
-            runCatching {
-                audioManager.setStreamVolume(STREAM_BLUETOOTH_SCO, clamped, 0)
             }
         }
         return clamped

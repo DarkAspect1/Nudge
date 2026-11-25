@@ -88,6 +88,9 @@ class SettingsRepository private constructor(context: Context) {
 
         val ENABLE_DND_TOGGLE = booleanPreferencesKey("enable_dnd_toggle")
         val DND_MODE_TYPE = stringPreferencesKey("dnd_mode_type")
+        val DND_INCLUDE_SOUND = booleanPreferencesKey("dnd_include_sound")
+        val DND_INCLUDE_VIBRATE = booleanPreferencesKey("dnd_include_vibrate")
+        val DND_INCLUDE_SILENT = booleanPreferencesKey("dnd_include_silent")
         val DND_TRIGGER = stringPreferencesKey("dnd_trigger")
         val DND_DOUBLE_TAP_TIMEOUT_MS = longPreferencesKey("dnd_double_tap_timeout_ms")
         val DND_TIMEOUT_MS = longPreferencesKey("dnd_timeout_ms")
@@ -193,6 +196,9 @@ class SettingsRepository private constructor(context: Context) {
         val NUDGE_MENU_Y_FRACTION = floatPreferencesKey("nudge_menu_y_fraction")
         val NUDGE_MENU_EDGE = stringPreferencesKey("nudge_menu_edge")
         val ENABLE_THIN_VOLUME_HUD = booleanPreferencesKey("enable_thin_volume_hud")
+        val THIN_HUD_EDGE_INSET_DP = floatPreferencesKey("thin_hud_edge_inset_dp")
+        val THIN_HUD_ON_LANDSCAPE_FULLSCREEN = booleanPreferencesKey("thin_hud_on_landscape_fullscreen")
+        val SHOW_THIN_PER_APP_VOLUME_HUD = booleanPreferencesKey("show_thin_per_app_volume_hud")
         val NUDGE_MENU_APPS_JSON = stringPreferencesKey("nudge_menu_apps_json")
     }
 
@@ -274,6 +280,7 @@ class SettingsRepository private constructor(context: Context) {
                 prefs[Keys.SHOW_SYSTEM_PANEL_WHEN_HUD_OFF] ?: defaults.showSystemPanelWhenHudOff,
             isPerAppVolumeEnabled = prefs[Keys.IS_PER_APP_VOLUME_ENABLED] ?: defaults.isPerAppVolumeEnabled,
             perAppVolumeDisplayMode = prefs[Keys.PER_APP_VOLUME_DISPLAY_MODE] ?: defaults.perAppVolumeDisplayMode,
+            showThinPerAppVolumeHud = prefs[Keys.SHOW_THIN_PER_APP_VOLUME_HUD] ?: defaults.showThinPerAppVolumeHud,
             updateCheckFrequency = prefs[Keys.UPDATE_CHECK_FREQUENCY] ?: defaults.updateCheckFrequency,
             lastUpdateCheckTimestampMs = prefs[Keys.LAST_UPDATE_CHECK_TIMESTAMP_MS] ?: defaults.lastUpdateCheckTimestampMs,
             cachedLatestReleaseJson = prefs[Keys.CACHED_LATEST_RELEASE_JSON] ?: defaults.cachedLatestReleaseJson,
@@ -325,6 +332,10 @@ class SettingsRepository private constructor(context: Context) {
                 prefs[Keys.HUD_EDGE_INSET_DP] ?: defaults.hudEdgeInsetDp
             ),
             enableThinVolumeHud = prefs[Keys.ENABLE_THIN_VOLUME_HUD] ?: defaults.enableThinVolumeHud,
+            thinHudEdgeInsetDp = NudgeSettings.clampThinHudEdgeInset(
+                prefs[Keys.THIN_HUD_EDGE_INSET_DP] ?: defaults.thinHudEdgeInsetDp
+            ),
+            thinHudOnLandscapeFullscreen = prefs[Keys.THIN_HUD_ON_LANDSCAPE_FULLSCREEN] ?: defaults.thinHudOnLandscapeFullscreen,
             hapticsEnabled = prefs[Keys.HAPTICS_ENABLED] ?: defaults.hapticsEnabled,
             edgePopHapticsEnabled = prefs[Keys.EDGE_POP_HAPTICS_ENABLED] ?: defaults.edgePopHapticsEnabled,
             volumeSliderHapticsEnabled = prefs[Keys.VOLUME_SLIDER_HAPTICS_ENABLED] ?: defaults.volumeSliderHapticsEnabled,
@@ -366,6 +377,9 @@ class SettingsRepository private constructor(context: Context) {
             dndModeType = prefs[Keys.DND_MODE_TYPE]?.let {
                 runCatching { DndModeType.valueOf(it) }.getOrNull()
             } ?: defaults.dndModeType,
+            dndIncludeSound = prefs[Keys.DND_INCLUDE_SOUND] ?: defaults.dndIncludeSound,
+            dndIncludeVibrate = prefs[Keys.DND_INCLUDE_VIBRATE] ?: defaults.dndIncludeVibrate,
+            dndIncludeSilent = prefs[Keys.DND_INCLUDE_SILENT] ?: defaults.dndIncludeSilent,
             useShizukuForDnd = prefs[Keys.USE_SHIZUKU_FOR_DND] ?: defaults.useShizukuForDnd,
             dndTrigger = prefs[Keys.DND_TRIGGER]?.let {
                 runCatching { HardwareTrigger.valueOf(it) }.getOrNull()
@@ -887,6 +901,54 @@ class SettingsRepository private constructor(context: Context) {
         requestLivePreview(PreviewTarget.DND, durationMs = _settings.value.dndTimeoutMs)
         scope.launch {
             appContext.nudgeDataStore.edit { it[Keys.DND_MODE_TYPE] = modeType.name }
+        }
+    }
+
+    fun setDndIncludeSound(enabled: Boolean) {
+        val current = _settings.value
+        if (!enabled) {
+            val count = (if (current.dndIncludeSound) 1 else 0) +
+                (if (current.dndIncludeVibrate) 1 else 0) +
+                (if (current.dndIncludeSilent) 1 else 0)
+            if (count <= 2) return
+        }
+        if (current.dndIncludeSound == enabled) return
+        _settings.value = current.copy(dndIncludeSound = enabled)
+        requestLivePreview(PreviewTarget.DND, durationMs = current.dndTimeoutMs)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.DND_INCLUDE_SOUND] = enabled }
+        }
+    }
+
+    fun setDndIncludeVibrate(enabled: Boolean) {
+        val current = _settings.value
+        if (!enabled) {
+            val count = (if (current.dndIncludeSound) 1 else 0) +
+                (if (current.dndIncludeVibrate) 1 else 0) +
+                (if (current.dndIncludeSilent) 1 else 0)
+            if (count <= 2) return
+        }
+        if (current.dndIncludeVibrate == enabled) return
+        _settings.value = current.copy(dndIncludeVibrate = enabled)
+        requestLivePreview(PreviewTarget.DND, durationMs = current.dndTimeoutMs)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.DND_INCLUDE_VIBRATE] = enabled }
+        }
+    }
+
+    fun setDndIncludeSilent(enabled: Boolean) {
+        val current = _settings.value
+        if (!enabled) {
+            val count = (if (current.dndIncludeSound) 1 else 0) +
+                (if (current.dndIncludeVibrate) 1 else 0) +
+                (if (current.dndIncludeSilent) 1 else 0)
+            if (count <= 2) return
+        }
+        if (current.dndIncludeSilent == enabled) return
+        _settings.value = current.copy(dndIncludeSilent = enabled)
+        requestLivePreview(PreviewTarget.DND, durationMs = current.dndTimeoutMs)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.DND_INCLUDE_SILENT] = enabled }
         }
     }
 
@@ -1856,9 +1918,35 @@ class SettingsRepository private constructor(context: Context) {
     fun setEnableThinVolumeHud(enabled: Boolean) {
         if (_settings.value.enableThinVolumeHud == enabled) return
         _settings.value = _settings.value.copy(enableThinVolumeHud = enabled)
-        requestLivePreview(PreviewTarget.HUD)
+        requestLivePreview(if (enabled) PreviewTarget.THIN_HUD else PreviewTarget.HUD)
         scope.launch {
             appContext.nudgeDataStore.edit { it[Keys.ENABLE_THIN_VOLUME_HUD] = enabled }
+        }
+    }
+
+    fun setThinHudEdgeInsetDp(insetDp: Float) {
+        val clamped = NudgeSettings.clampThinHudEdgeInset(insetDp)
+        if (_settings.value.thinHudEdgeInsetDp == clamped) return
+        _settings.value = _settings.value.copy(thinHudEdgeInsetDp = clamped)
+        requestLivePreview(PreviewTarget.THIN_HUD)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.THIN_HUD_EDGE_INSET_DP] = clamped }
+        }
+    }
+
+    fun setThinHudOnLandscapeFullscreen(enabled: Boolean) {
+        if (_settings.value.thinHudOnLandscapeFullscreen == enabled) return
+        _settings.value = _settings.value.copy(thinHudOnLandscapeFullscreen = enabled)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.THIN_HUD_ON_LANDSCAPE_FULLSCREEN] = enabled }
+        }
+    }
+
+    fun setShowThinPerAppVolumeHud(enabled: Boolean) {
+        if (_settings.value.showThinPerAppVolumeHud == enabled) return
+        _settings.value = _settings.value.copy(showThinPerAppVolumeHud = enabled)
+        scope.launch {
+            appContext.nudgeDataStore.edit { it[Keys.SHOW_THIN_PER_APP_VOLUME_HUD] = enabled }
         }
     }
 

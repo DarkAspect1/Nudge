@@ -137,7 +137,6 @@ fun getIconForAction(action: PersistentNudgeAction): ImageVector {
         PersistentNudgeAction.TOGGLE_FLASHLIGHT -> Icons.Rounded.FlashlightOn
         PersistentNudgeAction.TOGGLE_AUTO_ROTATE -> Icons.Rounded.ScreenRotation
         PersistentNudgeAction.OPEN_CAMERA -> Icons.Rounded.CameraAlt
-        PersistentNudgeAction.APP_SWITCH -> Icons.Rounded.SwapHoriz
         PersistentNudgeAction.OPEN_APP -> Icons.Rounded.Apps
         PersistentNudgeAction.SHOW_SYSTEM_VOLUME -> Icons.AutoMirrored.Rounded.VolumeUp
     }
@@ -169,7 +168,6 @@ fun getShortLabelForAction(action: PersistentNudgeAction): String {
         PersistentNudgeAction.TOGGLE_FLASHLIGHT -> "Flashlight"
         PersistentNudgeAction.TOGGLE_AUTO_ROTATE -> "Rotate"
         PersistentNudgeAction.OPEN_CAMERA -> "Camera"
-        PersistentNudgeAction.APP_SWITCH -> "Last App"
         PersistentNudgeAction.OPEN_APP -> "Open App"
         PersistentNudgeAction.SHOW_SYSTEM_VOLUME -> "System Slider"
     }
