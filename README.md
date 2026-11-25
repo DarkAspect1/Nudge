@@ -1,6 +1,6 @@
-# Nudge
+# Nudge Edge
 
-The app shows edge pops when you press the volume or power buttons, volume slider, and two action/modes panels. Based on a concept design that has now become a reality.
+The app shows edge pops as you volume or power buttons, redesigned volume slider, actions & modes panels and edge handles. Its Based on a concept design that has now become a reality.
 
 <p align="center">
   <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/DarkAspect1/Nudge">
@@ -13,25 +13,33 @@ The app shows edge pops when you press the volume or power buttons, volume slide
 ## Features
 
 - **Edge pops:** on volume and power button presses.
+**Choose between two options:** Rounded-top or Flat-top with an optional white glow
   
-- **Custom volume slider:** inspired by a concept design that was originally made for Iphones has now become a reality for Androids LOL.
-  Has an option for floating.
+- **Custom volume slider:** inspired by a concept design that was originally made for Iphones has now become a reality for Androids...
+- **Thin volume slider:** when long pressing volume up/down or clicking them +2 times, it now shows a thin slider and its **OPTIONAL**
+- **Cycle between Ring, Vibrate, and Mute modes easily:** Long pressing the sound icon on the slider HUD cycles between these 3 modes and displays a label for the current mode
+- **Transparency & Blur for volume slider**
 
 - **Audio Mixer:** attach it to the volume slider or leave it floating.
   
 - **DND/Silent panel:** change between two modes either ring/silent or dnd on/off.
-  
 - **Modes/Actions panel:** add new custom modes with custom icons/colors/names or even edit the existing ones and change their order like how you want it to be! **How it works:** it sends a quick silent notification that can be used by different automation/routine apps to do the functionality you want. or even better, for automation apps specifically that can receive broadcasts, the app sends a broadcast when a mode is selected alongside the silent notification (there's a guide in the app for detailed info)
   
 - **Both panels are triggered using side buttons** with up to 7 different combinations (custom buttons included for devices that has an additional button). When the panels are open, you can switch between modes using volume buttons or gesture swiping!
 
-- **New volume system** that reads your phone volume steps, multiplies it by 10 and here you go with 150, 250, 300, or more steps..
+- **Nudge Edge handles:** open by swiping: Run actions like screenshots, flashlight, camera, and more.
+**Up to 10 nudges.**
+**Many actions to choose from including:**
+**Nudge Menu:** a customizable menu that has all nudge options in a single place by cycling between them
+**Open Apps Menu:** choose your favourite apps, re-order them as you like, and cycle between them
+
 - **Individual app volume is here!** show it alongside volume slider or only in audio mixer **Must note that it uses Shizuku**
 - **Volume Counter:** Show volume count on your volume slider, applies to individual app volume slider too.
-- **Shizuku Implementation:** Grant all permissions with a single click, manage cloaked apps that the app hides its accessibility from (eg. banking apps), watchdog to keep the app alive, watchdog to keep permissions always active (both watchdogs are mainly for hardened systems, but anyone can use them)
-- **Added all panels activity:** all panels now are accessible from activity launcher or any similar feature in different apps. 
-- **Want haptics too? there's an option for that**
-
+- **Shizuku Implementation:** Grant all permissions with a single click, manage cloaked apps that the app hides its accessibility from (eg. banking apps), watchdog to keep the app alive, watchdog to keep permissions always active (both watchdogs are mainly for hardened systems, but anyone can use them). **Use shizuku for DND** for systems that has a problem that it doesnt cycle between the DND on/off properly & **Use shizuku for hold power button** if you dont want to set Nudge as your assistant
+- **All panels activity:** all panels are accessible from activity launcher or any similar feature in different apps.
+- **Tapping anywhere on the screen dismisses the panels**
+- **Want haptics too? there's a whole section for that part:** every panel and modes cycling has a separate switch
+  
  ---
 
 ## Problems and how to fix them

@@ -38,7 +38,6 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.FrameLayout
 import android.widget.Toast
 import android.hardware.camera2.CameraCharacteristics
@@ -170,7 +169,6 @@ class NudgeAccessibilityService : AccessibilityService() {
     private val nudgeMenuActive = MutableStateFlow(false)
     private val nudgeMenuShowingState = MutableStateFlow(false)
     private val isPersistentNudgeVisible = MutableStateFlow(true)
-    private val activeNudgePanelTriggerId = MutableStateFlow<String?>(null)
     private var volumeHoldThinJob: Job? = null
     private var hudDialog: Dialog? = null
     private val dndActiveModeTypeState = MutableStateFlow<DndModeType?>(null)
@@ -198,7 +196,7 @@ class NudgeAccessibilityService : AccessibilityService() {
     private var audioScope: CoroutineScope? = null
 
     private var edgePopView: ComposeView? = null
-    private var hudView: View? = null
+    private var hudView: ComposeView? = null
     private var modalView: View? = null
     private var swipeCatcherView: View? = null
     private var dndView: ComposeView? = null
@@ -220,7 +218,6 @@ class NudgeAccessibilityService : AccessibilityService() {
     private val modalActive = MutableStateFlow(false)
     private val dndActive = MutableStateFlow(false)
     private val dndState = MutableStateFlow(false)
-    private val ringerModeState = MutableStateFlow(AudioManager.RINGER_MODE_NORMAL)
     private val modesActive = MutableStateFlow(false)
     private val modesSelectedModeId = MutableStateFlow("normal")
     private val actionsWheelStep = MutableSharedFlow<Int>(extraBufferCapacity = 8)
@@ -283,7 +280,6 @@ class NudgeAccessibilityService : AccessibilityService() {
             }
             AudioManager.STREAM_VOICE_CALL -> {
                 callNormalizedVolume = frac
-                callNormalizedVolumeState.value = frac
                 if (resolveActiveVolumeStream() == ActiveVolumeStream.CALL) {
                     volumeFraction.value = if (isMuteAllSoundsActiveState.value) 0f else frac
                 }
@@ -557,8 +553,6 @@ class NudgeAccessibilityService : AccessibilityService() {
     @Volatile
     private var callNormalizedVolume = 0.5f
 
-    private val callNormalizedVolumeState = MutableStateFlow(0.5f)
-
     @Volatile
     private var mediaNormalizedVolume = 0.5f
 
@@ -584,9 +578,29 @@ class NudgeAccessibilityService : AccessibilityService() {
     private fun resolveActiveVolumeStreamSafe(): ActiveVolumeStream {
         return try {
             val mode = audioManager.mode
-            val isInCall = (mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION) || volumeController.isCallActive(this)
+            val isInCall = (mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION)
             if (isInCall) {
-                return ActiveVolumeStream.CALL
+                val pkg = currentForegroundPackage.orEmpty()
+                val isDialerOrSystem = pkg.isEmpty() ||
+                    pkg.contains("incallui") || pkg.contains("dialer") ||
+                    pkg.contains("telecom") || pkg.contains("phone") ||
+                    pkg.contains("systemui") || pkg == packageName
+                val hasActiveMediaPlayback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    runCatching {
+                        audioManager.activePlaybackConfigurations.any { config ->
+                            val usage = config.audioAttributes?.usage
+                            (usage == android.media.AudioAttributes.USAGE_MEDIA || usage == android.media.AudioAttributes.USAGE_GAME) &&
+                            config.audioAttributes?.contentType != android.media.AudioAttributes.CONTENT_TYPE_SPEECH
+                        }
+                    }.getOrDefault(audioManager.isMusicActive)
+                } else {
+                    audioManager.isMusicActive
+                }
+                if (!isDialerOrSystem && hasActiveMediaPlayback && isForegroundAppMediaCapable(pkg)) {
+                    ActiveVolumeStream.MEDIA
+                } else {
+                    ActiveVolumeStream.CALL
+                }
             } else if (mode == AudioManager.MODE_RINGTONE) {
                 ActiveVolumeStream.RING
             } else {
@@ -723,16 +737,7 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     private val volumeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val action = intent?.action ?: return
-            if (action == AudioManager.RINGER_MODE_CHANGED_ACTION) {
-                val newRinger = audioManager.ringerMode
-                ringerModeState.value = newRinger
-                if (dndActiveModeTypeState.value == DndModeType.SILENT_RING || effectiveSettingsState.value.dndModeType == DndModeType.SILENT_RING) {
-                    dndState.value = (newRinger != AudioManager.RINGER_MODE_NORMAL)
-                }
-                return
-            }
-            if (action != "android.media.VOLUME_CHANGED_ACTION") return
+            if (intent?.action != "android.media.VOLUME_CHANGED_ACTION") return
             val streamType = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1)
             if (streamType < 0) return
             val osNewValue = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1)
@@ -745,15 +750,14 @@ class NudgeAccessibilityService : AccessibilityService() {
                 val now = SystemClock.uptimeMillis()
                 val activeStreamEnum = resolveActiveVolumeStream()
                 val isBtConnected = volumeController.isBluetoothAudioConnected()
-                if (streamType == AudioManager.STREAM_VOICE_CALL || streamType == 0 || streamType == 6) {
-                    if (!hudScrubbing && (now - lastCallHardwareClickMs) > 350L && (now - lastProgrammaticAudioTimeMs) > 250L) {
+                if (streamType == AudioManager.STREAM_VOICE_CALL || streamType == 0) {
+                    if ((now - lastCallHardwareClickMs) > 350L) {
                         callNormalizedVolume = if (::fineVolumeController.isInitialized) {
                             fineVolumeController.readSystemNormalizedVolume(AudioManager.STREAM_VOICE_CALL)
                         } else {
                             (getStoredStepsForStream(AudioManager.STREAM_VOICE_CALL).toFloat() / 100f).coerceIn(0f, 1f)
                         }
-                        callNormalizedVolumeState.value = callNormalizedVolume
-                        if (activeStreamEnum == ActiveVolumeStream.CALL || volumeController.isCallActive(this@NudgeAccessibilityService)) {
+                        if (activeStreamEnum == ActiveVolumeStream.CALL) {
                             volumeFraction.value = if (isMuteAllSoundsActiveState.value) 0f else callNormalizedVolume
                         }
                     }
@@ -770,7 +774,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                     }
                     return@launch
                 }
-                if (streamType == AudioManager.STREAM_MUSIC &&
+                if ((streamType == AudioManager.STREAM_MUSIC || streamType == 6) &&
                     !hudScrubbing &&
                     !keyHeldDown &&
                     (now - lastProgrammaticAudioTimeMs) > 250L
@@ -853,7 +857,6 @@ class NudgeAccessibilityService : AccessibilityService() {
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        ringerModeState.value = audioManager.ringerMode
         settingsRepository = SettingsRepository.getInstance(this)
         effectiveSettingsState = combine(
             settingsRepository.settings,
@@ -881,7 +884,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                     volumeUpYFraction = (live.overrideOffsetPercent ?: (base.volumeUpYFraction * 100f)) / 100f,
                     volumeDownYFraction = (live.overrideOffsetPercent ?: (base.volumeDownYFraction * 100f)) / 100f
                 )
-                PreviewTarget.VOLUME_SLIDER, PreviewTarget.HUD, PreviewTarget.THIN_HUD -> if (live.isLandscapePreview) {
+                PreviewTarget.VOLUME_SLIDER, PreviewTarget.HUD -> if (live.isLandscapePreview) {
                     base.copy(
                         hudWidthDp = live.overrideWidthDp ?: base.hudWidthDp,
                         hudHeightDp = live.overrideHeightDp ?: base.hudHeightDp,
@@ -957,62 +960,6 @@ class NudgeAccessibilityService : AccessibilityService() {
             }
         }
 
-        ShizukuManager.onCustomHardwareKeyEvent = { dev, scan, isDown, name ->
-            val settings = effectiveSettingsState.value
-            val matches = (settings.customButtonScanCode != 0 && scan != 0 && settings.customButtonScanCode == scan) ||
-                (settings.customButtonLabel.isNotBlank() && name != null && (name.equals(settings.customButtonLabel, ignoreCase = true) || name.removePrefix("KEY_").equals(settings.customButtonLabel, ignoreCase = true)))
-            if (matches) {
-                serviceScope.launch(Dispatchers.Main) {
-                    val now = SystemClock.uptimeMillis()
-                    val customLongAssigned = isTriggerAssigned(HardwareTrigger.CUSTOM_BTN_LONG, settings)
-                    val customDoubleAssigned = isTriggerAssigned(HardwareTrigger.CUSTOM_BTN_DOUBLE, settings)
-                    val customSingleAssigned = isTriggerAssigned(HardwareTrigger.CUSTOM_BTN_SINGLE, settings)
-                    if (isDown) {
-                        customBtnDown = true
-                        customBtnDownTimeMs = now
-                        customBtnLongFired = false
-                        if (customLongAssigned) {
-                            customBtnLongJob?.cancel()
-                            customBtnLongJob = serviceScope.launch {
-                                delay(450L)
-                                if (customBtnDown) {
-                                    customBtnLongFired = true
-                                    handleHardwareTrigger(HardwareTrigger.CUSTOM_BTN_LONG)
-                                }
-                            }
-                        }
-                    } else {
-                        customBtnDown = false
-                        customBtnLongJob?.cancel()
-                        if (!customBtnLongFired) {
-                            val duration = now - customBtnDownTimeMs
-                            if (duration < 450L) {
-                                if (customDoubleAssigned) {
-                                    val elapsed = now - lastCustomBtnTapTimeMs
-                                    if (elapsed <= 300L) {
-                                        customBtnSinglePendingJob?.cancel()
-                                        customBtnSinglePendingJob = null
-                                        handleHardwareTrigger(HardwareTrigger.CUSTOM_BTN_DOUBLE)
-                                    } else {
-                                        lastCustomBtnTapTimeMs = now
-                                        customBtnSinglePendingJob?.cancel()
-                                        customBtnSinglePendingJob = serviceScope.launch {
-                                            delay(300L)
-                                            if (customSingleAssigned) {
-                                                handleHardwareTrigger(HardwareTrigger.CUSTOM_BTN_SINGLE)
-                                            }
-                                        }
-                                    }
-                                } else if (customSingleAssigned) {
-                                    handleHardwareTrigger(HardwareTrigger.CUSTOM_BTN_SINGLE)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         runCatching { Shizuku.addBinderReceivedListenerSticky(shizukuBinderReceivedListener) }
         runCatching { Shizuku.addRequestPermissionResultListener(shizukuPermissionResultListener) }
 
@@ -1070,12 +1017,10 @@ class NudgeAccessibilityService : AccessibilityService() {
         lifecycleOwner.onAttached()
 
         val info = serviceInfo ?: AccessibilityServiceInfo()
-        info.flags = info.flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        info.flags = info.flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
         serviceInfo = info
 
-        val volumeFilter = IntentFilter("android.media.VOLUME_CHANGED_ACTION").apply {
-            addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
-        }
+        val volumeFilter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
         val powerFilter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
@@ -1261,7 +1206,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         handleDisplayChange()
     }
 
-    private fun markButtonReleasedAndHideEdgePop(keyCode: Int, scanCode: Int, settings: NudgeSettings) {
+    private fun markButtonReleasedAndHideEdgePop(keyCode: Int, settings: NudgeSettings) {
         when (keyCode) {
             KeyEvent.KEYCODE_VOLUME_UP -> {
                 volUpIsDown = false
@@ -1281,9 +1226,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 powerPopActive.value = false
             }
             else -> {
-                val matchesCustom = (settings.customButtonKeyCode != 0 && keyCode == settings.customButtonKeyCode) ||
-                    (settings.customButtonScanCode != 0 && scanCode != 0 && scanCode == settings.customButtonScanCode)
-                if (matchesCustom) {
+                if (keyCode == settings.customButtonKeyCode) {
                     customBtnDown = false
                 }
             }
@@ -1308,7 +1251,7 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         val isReleaseAction = event.action == KeyEvent.ACTION_UP || (event.flags and KeyEvent.FLAG_CANCELED) != 0
         if (isReleaseAction) {
-            markButtonReleasedAndHideEdgePop(keyCode, event.scanCode, currentSettings)
+            markButtonReleasedAndHideEdgePop(keyCode, currentSettings)
         }
 
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
@@ -1327,30 +1270,20 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         val isLandscape = EdgeOrientationMapper.isLandscapeRotation(rotationState.value)
 
-        if (isScanningCustomButton && (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)) {
+        if (isScanningCustomButton && event.action == KeyEvent.ACTION_DOWN) {
             val code = event.keyCode
             val scancode = event.scanCode
-            if (code != KeyEvent.KEYCODE_BACK && code != KeyEvent.KEYCODE_ESCAPE && code != KeyEvent.KEYCODE_HOME) {
-                if (code != 0 || scancode != 0) {
-                    val label = if (code != 0 && code != KeyEvent.KEYCODE_UNKNOWN) {
-                        KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")
-                    } else if (scancode != 0) {
-                        "SCAN_$scancode"
-                    } else {
-                        "CUSTOM_KEY"
-                    }
-                    isScanningCustomButton = false
-                    val trigger = HardwareKeyTrigger(
-                        source = TriggerSource.ACCESSIBILITY,
-                        androidKeyCode = code.takeIf { it != 0 },
-                        scanCode = scancode.takeIf { it != 0 },
-                        linuxKeyName = label,
-                        deviceName = event.device?.name
-                    )
-                    onCustomButtonScanned?.invoke(trigger)
-                    return true
-                }
-            }
+            val label = KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")
+            isScanningCustomButton = false
+            val trigger = HardwareKeyTrigger(
+                source = TriggerSource.ACCESSIBILITY,
+                androidKeyCode = code,
+                scanCode = scancode,
+                linuxKeyName = label,
+                deviceName = event.device?.name
+            )
+            onCustomButtonScanned?.invoke(trigger)
+            return true
         }
 
         if (keyCode == KeyEvent.KEYCODE_BACK || keyCode == KeyEvent.KEYCODE_ESCAPE) {
@@ -1394,13 +1327,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                     powerIsDown = true
                     isButtonPhysicallyHeld[ButtonType.POWER] = true
                     lastPowerDownTimeMs = now
-                    if (volDownIsDown || (now - lastDownKeyEventTimestamp <= 350L)) {
-                        dismissVolumeHud()
-                        cancelHoldRepeatLoop(isUp = false)
-                        volumeHoldThinJob?.cancel()
-                        pendingVolDownJob?.cancel()
-                        pendingVolDownJob = null
-                    }
                     if (event.repeatCount == 0) {
                         if (modesActive.value) dismissActionsPanel()
                         if (dndActive.value) dismissDndOverlay()
@@ -1447,9 +1373,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             return true
         }
 
-        val matchesCustomButton = (currentSettings.customButtonKeyCode != 0 && keyCode == currentSettings.customButtonKeyCode) ||
-            (currentSettings.customButtonScanCode != 0 && event.scanCode != 0 && event.scanCode == currentSettings.customButtonScanCode)
-        if (matchesCustomButton) {
+        if (currentSettings.customButtonKeyCode != 0 && keyCode == currentSettings.customButtonKeyCode) {
             val now = SystemClock.uptimeMillis()
             val customLongAssigned = isTriggerAssigned(HardwareTrigger.CUSTOM_BTN_LONG, currentSettings)
             val customDoubleAssigned = isTriggerAssigned(HardwareTrigger.CUSTOM_BTN_DOUBLE, currentSettings)
@@ -1529,24 +1453,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             when (event.action) {
                 KeyEvent.ACTION_DOWN -> {
                     if (event.repeatCount == 0) {
-                        val activeMode = dndActiveModeTypeState.value ?: currentSettings.dndModeType
-                        if (activeMode == DndModeType.DND_ON_OFF) {
-                            setDndState(active = isUp)
-                        } else {
-                            val enabledModes = buildList {
-                                if (currentSettings.dndIncludeSound) add(AudioManager.RINGER_MODE_NORMAL)
-                                if (currentSettings.dndIncludeVibrate) add(AudioManager.RINGER_MODE_VIBRATE)
-                                if (currentSettings.dndIncludeSilent) add(AudioManager.RINGER_MODE_SILENT)
-                            }.ifEmpty { listOf(AudioManager.RINGER_MODE_NORMAL, AudioManager.RINGER_MODE_VIBRATE, AudioManager.RINGER_MODE_SILENT) }
-                            val currentRinger = audioManager.ringerMode
-                            val curIdx = enabledModes.indexOf(currentRinger)
-                            val nextRinger = if (isUp) {
-                                if (curIdx > 0) enabledModes[curIdx - 1] else enabledModes.last()
-                            } else {
-                                if (curIdx >= 0 && curIdx < enabledModes.size - 1) enabledModes[curIdx + 1] else enabledModes.first()
-                            }
-                            setRingerMode(nextRinger)
-                        }
+                        setDndState(active = isUp)
                     }
                     return true
                 }
@@ -1605,14 +1512,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                 } else {
                     volDownIsDown = true
                     lastVolDownPressTimeMs = now
-                    if (powerIsDown || (now - lastPowerKeyEventTimestamp <= 350L)) {
-                        dismissVolumeHud()
-                        cancelHoldRepeatLoop(isUp = false)
-                        volumeHoldThinJob?.cancel()
-                        pendingVolDownJob?.cancel()
-                        pendingVolDownJob = null
-                        return super.onKeyEvent(event)
-                    }
                     wasAtMinOnDown = volumeFraction.value <= 0.001f
                     if (wasAtMinOnDown) {
                         triggerBoundaryPulse(isMax = false, pressDurationMs = 120L)
@@ -1621,9 +1520,9 @@ class NudgeAccessibilityService : AccessibilityService() {
 
                 volumeHoldThinJob?.cancel()
                 volumeHoldThinJob = serviceScope.launch {
-                    delay(350L)
+                    delay(400L)
                     val latest = effectiveSettingsState.value
-                    if ((volUpIsDown || volDownIsDown) && latest.enableThinVolumeHud) {
+                    if ((volUpIsDown || volDownIsDown || keyHeldDown) && latest.enableThinVolumeHud) {
                         isHudThin.value = true
                     }
                 }
@@ -1639,8 +1538,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                         keyHeldDown = false
                         chordCandidateStartTimeMs = minOf(now, otherDownTime)
                         chordFired = true
-                        handleHardwareTrigger(HardwareTrigger.BOTH_VOLUME_SHORT)
-                        dismissVolumeHud()
 
                         if (currentSettings.isEdgePopMasterEnabled && popAllowed) {
                             if (!doesVisiblePanelOverlapEdgePop(EdgePopType.VOL_UP)) upPopActive.value = true
@@ -1652,10 +1549,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                 }
 
                 if (hudIsActive) {
-                    if (!isUp && (powerIsDown || (now - lastPowerKeyEventTimestamp <= 350L))) {
-                        dismissVolumeHud()
-                        return super.onKeyEvent(event)
-                    }
                     return performImmediateVolumeDown(isUp, currentSettings, isLandscape, popAllowed, hudAllowed, downTimeMs = now)
                 }
 
@@ -1716,10 +1609,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                     return true
                 }
 
-                if (!isUp && (powerIsDown || (now - lastPowerKeyEventTimestamp <= 350L))) {
-                    dismissVolumeHud()
-                    return super.onKeyEvent(event)
-                }
                 return performImmediateVolumeDown(isUp, currentSettings, isLandscape, popAllowed, hudAllowed, downTimeMs = now)
             }
 
@@ -1732,7 +1621,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                 volumeHoldThinJob?.cancel()
                 volumeHoldThinJob = null
                 if (isUp) volUpIsDown = false else volDownIsDown = false
-                keyHeldDown = false
 
                 val isCanceled = (event.flags and KeyEvent.FLAG_CANCELED) != 0
                 val downTime = if (isUp) lastVolUpPressTimeMs else lastVolDownPressTimeMs
@@ -1932,7 +1820,7 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     fun doesVisiblePanelOverlapEdgePop(buttonType: EdgePopType): Boolean {
-        val isVolumeSliderVisible = hudActive.value || effectivePreviewTargetState.value == PreviewTarget.HUD || effectivePreviewTargetState.value == PreviewTarget.VOLUME_SLIDER || effectivePreviewTargetState.value == PreviewTarget.THIN_HUD
+        val isVolumeSliderVisible = hudActive.value || effectivePreviewTargetState.value == PreviewTarget.HUD || effectivePreviewTargetState.value == PreviewTarget.VOLUME_SLIDER
         val isDndVisible = dndActive.value || effectivePreviewTargetState.value == PreviewTarget.DND || effectivePreviewTargetState.value == PreviewTarget.DND_PANEL
         val isModesVisible = modesActive.value || effectivePreviewTargetState.value == PreviewTarget.MODES || effectivePreviewTargetState.value == PreviewTarget.ACTIONS_PANEL
 
@@ -2094,21 +1982,14 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun setRingerMode(targetRinger: Int) {
-        val settings = effectiveSettingsState.value
-        runCatching {
-            audioManager.ringerMode = targetRinger
-        }
-        ringerModeState.value = targetRinger
-        dndState.value = (targetRinger != AudioManager.RINGER_MODE_NORMAL)
-        showDndOverlay(settings.dndTimeoutMs)
-        if (settings.effectiveDndPanelHaptics) {
-            audioScope?.launch { volumeController.triggerHaptic(strong = true) }
-        }
-    }
-
     private fun setDndState(active: Boolean) {
         val settings = effectiveSettingsState.value
+        val hasPolicyAccess = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            notificationManager.isNotificationPolicyAccessGranted
+        } else {
+            true
+        }
+
         val activeMode = dndActiveModeTypeState.value ?: settings.dndModeType
         when (activeMode) {
             DndModeType.SILENT_RING -> {
@@ -2116,11 +1997,22 @@ class NudgeAccessibilityService : AccessibilityService() {
                 runCatching {
                     audioManager.ringerMode = targetRinger
                 }
-                ringerModeState.value = targetRinger
             }
             DndModeType.DND_ON_OFF -> {
-                serviceScope.launch {
-                    dndController.setDndState(active, settings.useShizukuForDnd)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && hasPolicyAccess) {
+                    val targetFilter = if (active) {
+                        NotificationManager.INTERRUPTION_FILTER_PRIORITY
+                    } else {
+                        NotificationManager.INTERRUPTION_FILTER_ALL
+                    }
+                    runCatching {
+                        notificationManager.setInterruptionFilter(targetFilter)
+                    }
+                } else {
+                    val targetRinger = if (active) AudioManager.RINGER_MODE_SILENT else AudioManager.RINGER_MODE_NORMAL
+                    runCatching {
+                        audioManager.ringerMode = targetRinger
+                    }
                 }
             }
         }
@@ -2134,35 +2026,52 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     private fun executeDndToggle() {
         val settings = effectiveSettingsState.value
+        val hasPolicyAccess = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            notificationManager.isNotificationPolicyAccessGranted
+        } else {
+            true
+        }
+
         val activeMode = dndActiveModeTypeState.value ?: settings.dndModeType
         val targetActive: Boolean = when (activeMode) {
             DndModeType.SILENT_RING -> {
-                val enabledModes = buildList {
-                    if (settings.dndIncludeSound) add(AudioManager.RINGER_MODE_NORMAL)
-                    if (settings.dndIncludeVibrate) add(AudioManager.RINGER_MODE_VIBRATE)
-                    if (settings.dndIncludeSilent) add(AudioManager.RINGER_MODE_SILENT)
-                }.ifEmpty { listOf(AudioManager.RINGER_MODE_NORMAL, AudioManager.RINGER_MODE_VIBRATE, AudioManager.RINGER_MODE_SILENT) }
-
-                val currentRinger = audioManager.ringerMode
-                val curIdx = enabledModes.indexOf(currentRinger)
-                val nextRinger = if (curIdx >= 0) {
-                    enabledModes[(curIdx + 1) % enabledModes.size]
+                val liveRinger = audioManager.ringerMode
+                if (liveRinger == AudioManager.RINGER_MODE_NORMAL) {
+                    runCatching {
+                        audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+                    }
+                    true
                 } else {
-                    enabledModes.first()
+                    runCatching {
+                        audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+                    }
+                    false
                 }
-                runCatching {
-                    audioManager.ringerMode = nextRinger
-                }
-                ringerModeState.value = nextRinger
-                nextRinger != AudioManager.RINGER_MODE_NORMAL
             }
             DndModeType.DND_ON_OFF -> {
-                val isCurrentlyActive = DndController.isDndActive(notificationManager, this)
-                val newActive = !isCurrentlyActive
-                serviceScope.launch {
-                    dndController.setDndState(newActive, settings.useShizukuForDnd)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && hasPolicyAccess) {
+                    val currentFilter = notificationManager.currentInterruptionFilter
+                    if (currentFilter == NotificationManager.INTERRUPTION_FILTER_ALL) {
+                        runCatching {
+                            notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+                        }
+                        true
+                    } else {
+                        runCatching {
+                            notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+                        }
+                        false
+                    }
+                } else {
+                    val liveRinger = audioManager.ringerMode
+                    if (liveRinger == AudioManager.RINGER_MODE_NORMAL) {
+                        runCatching { audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT }
+                        true
+                    } else {
+                        runCatching { audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL }
+                        false
+                    }
                 }
-                newActive
             }
         }
 
@@ -2192,13 +2101,11 @@ class NudgeAccessibilityService : AccessibilityService() {
     private fun dismissDndOverlay() {
         dndHideJob?.cancel()
         dndActive.value = false
-        checkResetActiveNudgePanelTrigger()
         dndGoneJob?.cancel()
         dndGoneJob = serviceScope.launch {
             delay(220L)
             if (!dndActive.value && effectivePreviewTargetState.value != PreviewTarget.DND && effectivePreviewTargetState.value != PreviewTarget.DND_PANEL) {
                 dndView?.visibility = View.GONE
-                checkResetActiveNudgePanelTrigger()
             }
         }
     }
@@ -2245,7 +2152,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         modalActive.value = true
     }
 
-    fun showActionsPanel(playHaptic: Boolean = true) {
+    fun showActionsPanel() {
         dismissOverlappingEdgePops()
         val settings = effectiveSettingsState.value
         val modes = settings.customModes.ifEmpty { DEFAULT_CUSTOM_MODES }
@@ -2254,7 +2161,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         modesActive.value = true
         modesView?.visibility = View.VISIBLE
         resetModesTimeout(settings.modesTimeoutMs)
-        if (playHaptic && settings.effectiveActionsPanelHaptics) {
+        if (settings.effectiveActionsPanelHaptics) {
             audioScope?.launch { volumeController.triggerHaptic(strong = true) }
         }
     }
@@ -2380,13 +2287,11 @@ class NudgeAccessibilityService : AccessibilityService() {
     fun dismissActionsPanel() {
         modesHideJob?.cancel()
         modesActive.value = false
-        checkResetActiveNudgePanelTrigger()
         modesGoneJob?.cancel()
         modesGoneJob = serviceScope.launch {
             delay(220L)
             if (!modesActive.value && effectivePreviewTargetState.value != PreviewTarget.MODES && effectivePreviewTargetState.value != PreviewTarget.ACTIONS_PANEL) {
                 modesView?.visibility = View.GONE
-                checkResetActiveNudgePanelTrigger()
             }
         }
     }
@@ -2459,7 +2364,6 @@ class NudgeAccessibilityService : AccessibilityService() {
         } else {
             hudActive.value = false
             hudHideJob?.cancel()
-            checkResetActiveNudgePanelTrigger()
         }
         if (isPreview) {
             settingsRepository.stopLivePreview()
@@ -2577,36 +2481,6 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun isFullscreenOrLandscape(): Boolean {
-        val isLandscape = EdgeOrientationMapper.isLandscapeRotation(rotationState.value) ||
-            resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        if (isLandscape) return true
-
-        val windowList = runCatching { windows }.getOrNull()
-        if (!windowList.isNullOrEmpty()) {
-            val hasStatusBar = windowList.any { w ->
-                w.type == AccessibilityWindowInfo.TYPE_SYSTEM && runCatching {
-                    val rect = android.graphics.Rect()
-                    w.getBoundsInScreen(rect)
-                    rect.top == 0 && rect.height() in 20..250
-                }.getOrDefault(false)
-            }
-            if (hasStatusBar) {
-                return false
-            }
-            val hasFullscreenApp = windowList.any { w ->
-                w.type == AccessibilityWindowInfo.TYPE_APPLICATION && runCatching {
-                    val rect = android.graphics.Rect()
-                    w.getBoundsInScreen(rect)
-                    val dm = resources.displayMetrics
-                    rect.top <= 0 && rect.bottom >= dm.heightPixels && rect.left <= 0 && rect.right >= dm.widthPixels
-                }.getOrDefault(false)
-            }
-            if (hasFullscreenApp) return true
-        }
-        return false
-    }
-
     private fun handleHudTrigger(
         settings: NudgeSettings,
         initialPress: Boolean
@@ -2615,22 +2489,14 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (initialPress) {
             val now = SystemClock.uptimeMillis()
             if (settings.enableThinVolumeHud) {
-                if (settings.thinHudOnLandscapeFullscreen && isFullscreenOrLandscape()) {
-                    isHudThin.value = true
+                if (now - lastVolumePressTimeMs <= 1600L) {
+                    volumePressCount++
                 } else {
-                    if (now - lastVolumePressTimeMs <= 1600L) {
-                        volumePressCount++
-                    } else {
-                        volumePressCount = 1
-                    }
-                    if (volumePressCount >= 2) {
-                        isHudThin.value = true
-                    } else {
-                        isHudThin.value = false
-                    }
+                    volumePressCount = 1
                 }
-            } else {
-                isHudThin.value = false
+                if (volumePressCount >= 2) {
+                    isHudThin.value = true
+                }
             }
             val isLandscape = EdgeOrientationMapper.isLandscapeRotation(rotationState.value)
             val popAllowed = EdgeOrientationMapper.shouldShowEdgePop(isLandscape, settings)
@@ -2769,20 +2635,15 @@ class NudgeAccessibilityService : AccessibilityService() {
         val currentSteps = getStoredStepsForStream(streamType)
         val changed = targetSteps != currentSteps
 
-        val now = SystemClock.uptimeMillis()
         setStoredStepsForStream(streamType, targetSteps)
-        lastProgrammaticAudioTimeMs = now
+        lastProgrammaticAudioTimeMs = SystemClock.uptimeMillis()
 
         if (streamType == AudioManager.STREAM_MUSIC) {
             volumeFraction.value = appliedFrac
         } else if (streamType == AudioManager.STREAM_RING && resolveActiveVolumeStream() == ActiveVolumeStream.RING) {
             volumeFraction.value = appliedFrac
-            ringNormalizedVolume = appliedFrac
-        } else if ((streamType == AudioManager.STREAM_VOICE_CALL || streamType == 6) && (resolveActiveVolumeStream() == ActiveVolumeStream.CALL || volumeController.isCallActive(this))) {
+        } else if (streamType == AudioManager.STREAM_VOICE_CALL && resolveActiveVolumeStream() == ActiveVolumeStream.CALL) {
             volumeFraction.value = appliedFrac
-            callNormalizedVolume = appliedFrac
-            callNormalizedVolumeState.value = appliedFrac
-            lastCallHardwareClickMs = now
         }
 
         if (settings.effectiveVolumeSliderHaptics && !isMuteAllSoundsActiveState.value && allowHaptic) {
@@ -2793,51 +2654,6 @@ class NudgeAccessibilityService : AccessibilityService() {
             }
         }
         return changed
-    }
-
-    private fun applyTargetActiveStreamFraction(fraction: Float, settings: NudgeSettings) {
-        val now = SystemClock.uptimeMillis()
-        lastProgrammaticAudioTimeMs = now
-        val activeStream = resolveActiveVolumeStream()
-        val inCall = (activeStream == ActiveVolumeStream.CALL) || volumeController.isCallActive(this)
-        if (inCall) {
-            lastCallHardwareClickMs = now
-            val newFrac = if (::fineVolumeController.isInitialized) {
-                fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_VOICE_CALL, fraction)
-            } else {
-                val maxCall = volumeController.getStreamMax(AudioManager.STREAM_VOICE_CALL)
-                val targetCoarse = (fraction * maxCall.toFloat()).roundToInt().coerceIn(1, maxCall)
-                runCatching { audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, targetCoarse, 0) }
-                fraction
-            }
-            callNormalizedVolume = newFrac
-            callNormalizedVolumeState.value = newFrac
-            volumeFraction.value = newFrac
-        } else if (activeStream == ActiveVolumeStream.RING) {
-            val newFrac = if (::fineVolumeController.isInitialized) {
-                fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_RING, fraction)
-            } else {
-                val maxRing = volumeController.getStreamMax(AudioManager.STREAM_RING)
-                val targetCoarse = (fraction * maxRing.toFloat()).roundToInt().coerceIn(0, maxRing)
-                runCatching { audioManager.setStreamVolume(AudioManager.STREAM_RING, targetCoarse, 0) }
-                fraction
-            }
-            ringNormalizedVolume = newFrac
-            volumeFraction.value = newFrac
-        } else {
-            val mediaLimit = if (::fineVolumeController.isInitialized) {
-                fineVolumeController.getStreamFineMaxCount(AudioManager.STREAM_MUSIC)
-            } else 100
-            val targetSteps = (fraction.coerceIn(0f, 1f) * mediaLimit.toFloat()).roundToInt().coerceIn(0, mediaLimit)
-            val currentSteps = getStoredStepsForStream(AudioManager.STREAM_MUSIC)
-            volumeFraction.value = fraction
-            if (targetSteps != currentSteps) {
-                applyTargetMusicSteps(targetSteps)
-            }
-        }
-        if (settings.effectiveVolumeSliderHaptics && !isMuteAllSoundsActiveState.value) {
-            volumeController.triggerHaptic(strong = false)
-        }
     }
 
     private fun startAudioStepAndHoldLoop(
@@ -2871,9 +2687,9 @@ class NudgeAccessibilityService : AccessibilityService() {
                 )
             }
 
-            val delayToHold = (downTimeMs + 350L - SystemClock.uptimeMillis()).coerceAtLeast(0L)
-            if (delayToHold > 0L) {
-                delay(delayToHold)
+            val delayTo170 = (downTimeMs + 170L - SystemClock.uptimeMillis()).coerceAtLeast(0L)
+            if (delayTo170 > 0L) {
+                delay(delayTo170)
             }
 
             val directionSign = if (isUp) 1f else -1f
@@ -2886,12 +2702,12 @@ class NudgeAccessibilityService : AccessibilityService() {
                 val showSystemUi = EdgeOrientationMapper.shouldShowSystemVolumePanel(isLandscape, latest)
 
                 val now = SystemClock.uptimeMillis()
-                if ((now - downTimeMs) >= 350L && latest.enableThinVolumeHud && !isHudThin.value) {
+                if ((now - downTimeMs) >= 400L && latest.enableThinVolumeHud && !isHudThin.value) {
                     withContext(Dispatchers.Main) {
                         isHudThin.value = true
                     }
                 }
-                val holdDurationSec = ((now - downTimeMs - 350L).coerceAtLeast(0L)) / 1000f
+                val holdDurationSec = ((now - downTimeMs - 170L).coerceAtLeast(0L)) / 1000f
                 val stepFactor = 1.0f
                 val velocityPerSec = when {
                     holdDurationSec < 0.25f -> (0.45f + holdDurationSec * 1.5f) * stepFactor
@@ -3032,6 +2848,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             delay(autoHideMs)
             if (!hudScrubbing && !modalActive.value) {
                 hudActive.value = false
+                isHudThin.value = false
                 volumePressCount = 0
                 isHoldingVolUpAtMax.value = false
                 isHoldingVolDownAtMin.value = false
@@ -3041,24 +2858,15 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun checkResetActiveNudgePanelTrigger() {
-        if (!hudActive.value && !modalActive.value && !dndActive.value && !modesActive.value && !nudgeMenuActive.value) {
-            if (activeNudgePanelTriggerId.value != null) {
-                activeNudgePanelTriggerId.value = null
-                updatePersistentNudgeCatchersTouchability()
-            }
-        }
-    }
-
     private fun dismissVolumeHud() {
         hudHideJob?.cancel()
         hudActive.value = false
+        isHudThin.value = false
         volumePressCount = 0
         isHoldingVolUpAtMax.value = false
         isHoldingVolDownAtMin.value = false
         ringerModeLabelDismissJob?.cancel()
         ringerModeLabelState.value = null
-        checkResetActiveNudgePanelTrigger()
     }
 
     private fun setupOverlayWindows() {
@@ -3097,7 +2905,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 rotation
             )
 
-            val isVolumeSliderEditing = preview == PreviewTarget.VOLUME_SLIDER || preview == PreviewTarget.HUD || preview == PreviewTarget.THIN_HUD
+            val isVolumeSliderEditing = preview == PreviewTarget.VOLUME_SLIDER || preview == PreviewTarget.HUD
             val showVolUpPop = !isVolumeSliderEditing && popAllowed && (
                 upActive ||
                     preview == PreviewTarget.POP_UP ||
@@ -3148,10 +2956,14 @@ class NudgeAccessibilityService : AccessibilityService() {
             )
 
             val isNudgeVisible by isPersistentNudgeVisible.collectAsState()
-            val hiddenNudgeId by activeNudgePanelTriggerId.collectAsState()
-            val isPreviewTarget = preview != PreviewTarget.NONE || livePreview.activeTarget != PreviewTarget.NONE
+            val isNudgeMenuOpen by nudgeMenuActive.collectAsState()
+            val isNudgeMenuShowing by nudgeMenuShowingState.collectAsState()
+            val onlyAppsList by nudgeMenuOnlyApps.collectAsState()
+            val isAnyMenuShowing = !isNudgeVisible || isNudgeMenuOpen || isNudgeMenuShowing || onlyAppsList != null ||
+                preview == PreviewTarget.NUDGE_MENU || preview == PreviewTarget.OPEN_APPS_MENU ||
+                livePreview.activeTarget == PreviewTarget.NUDGE_MENU || livePreview.activeTarget == PreviewTarget.OPEN_APPS_MENU
             AnimatedVisibility(
-                visible = settings.enablePersistentNudges && isNudgeVisible && !isPreviewTarget && !isCurrentAppExcludedFast,
+                visible = settings.enablePersistentNudges && !isAnyMenuShowing && !isCurrentAppExcludedFast,
                 enter = fadeIn(tween(180)),
                 exit = fadeOut(tween(120))
             ) {
@@ -3162,7 +2974,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                     nudgeHeightDp = settings.nudgeHeightDp,
                     glowEnabled = settings.nudgeGlowEnabled,
                     displayRotation = rotation,
-                    hiddenNudgeId = hiddenNudgeId,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -3304,7 +3115,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                 val active by hudActive.collectAsState()
                 val preview by effectivePreviewTargetState.collectAsState()
                 val volFraction by volumeFraction.collectAsState()
-                val callVol by callNormalizedVolumeState.collectAsState()
                 val isBtConnected by isBluetoothAudioConnected.collectAsState()
                 val ringerModeLabel by ringerModeLabelState.collectAsState()
 
@@ -3316,39 +3126,13 @@ class NudgeAccessibilityService : AccessibilityService() {
                 )
                 val isAttachedMixerActive = (active && modalActive.collectAsState().value && latestSettings.isAudioMixerAttachedToSlider)
                 val isTransitionFromMixer = (SystemClock.uptimeMillis() - modalDismissedTimeMs < 800L)
-                val isVolumeSliderPreview = preview == PreviewTarget.HUD || preview == PreviewTarget.VOLUME_SLIDER || preview == PreviewTarget.THIN_HUD
+                val isVolumeSliderPreview = preview == PreviewTarget.HUD || preview == PreviewTarget.VOLUME_SLIDER
                 val visible = hudAllowed && (active || isVolumeSliderPreview) && !isAttachedMixerActive
 
                 val activeApps by appVolumeController.activeMediaApps.collectAsState()
-                val inCallActive = volumeController.isCallActive(this@NudgeAccessibilityService)
-                val primaryApp = if (latestSettings.isPerAppVolumeEnabled && latestSettings.perAppVolumeDisplayMode == "ALONGSIDE_SLIDER" && !inCallActive) {
+                val primaryApp = if (latestSettings.isPerAppVolumeEnabled && latestSettings.perAppVolumeDisplayMode == "ALONGSIDE_SLIDER") {
                     appVolumeController.getPriorityAlongsideApp()
                 } else null
-                val activeStream = resolveActiveVolumeStream()
-                val isCallActiveStream = inCallActive || (activeStream == ActiveVolumeStream.CALL)
-                val currentStreamType = if (isCallActiveStream) {
-                    AudioManager.STREAM_VOICE_CALL
-                } else when (activeStream) {
-                    ActiveVolumeStream.CALL -> AudioManager.STREAM_VOICE_CALL
-                    ActiveVolumeStream.RING -> AudioManager.STREAM_RING
-                    ActiveVolumeStream.MEDIA -> AudioManager.STREAM_MUSIC
-                }
-                val effectiveStreamLimit = if (::fineVolumeController.isInitialized) {
-                    fineVolumeController.getStreamFineMaxCount(currentStreamType)
-                } else {
-                    if (isCallActiveStream || currentStreamType == AudioManager.STREAM_VOICE_CALL) {
-                        volumeController.getStreamMax(AudioManager.STREAM_VOICE_CALL) * 10
-                    } else if (currentStreamType == AudioManager.STREAM_RING) {
-                        volumeController.getStreamMax(AudioManager.STREAM_RING) * 10
-                    } else 100
-                }
-                val callMinStep = if (isCallActiveStream || currentStreamType == AudioManager.STREAM_VOICE_CALL) {
-                    if (::fineVolumeController.isInitialized) {
-                        fineVolumeController.getEffectiveMinIndex(AudioManager.STREAM_VOICE_CALL) * FineVolumeController.FINE_MULTIPLIER
-                    } else {
-                        volumeController.getStreamMin(AudioManager.STREAM_VOICE_CALL).coerceAtLeast(1) * 10
-                    }
-                } else 0
                 val mediaLimit = if (::fineVolumeController.isInitialized) {
                     fineVolumeController.getStreamFineMaxCount(AudioManager.STREAM_MUSIC)
                 } else 100
@@ -3373,17 +3157,36 @@ class NudgeAccessibilityService : AccessibilityService() {
                 }
 
                 if (primaryApp != null) {
-                    val isThinValue = isHudThin.collectAsState().value || (preview == PreviewTarget.THIN_HUD)
-                    val showAlongside = !isThinValue || latestSettings.showThinPerAppVolumeHud
-                    val alongsideShiftX = 0f
-                    val alongsideShiftY = 0f
+                    val isThinValue = isHudThin.collectAsState().value
+                    val alongsideShiftX by animateFloatAsState(
+                        targetValue = if (isThinValue) {
+                            when (screenEdge) {
+                                ScreenEdge.RIGHT -> 44f
+                                ScreenEdge.LEFT -> -44f
+                                else -> 0f
+                            }
+                        } else 0f,
+                        animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f),
+                        label = "alongsideShiftX"
+                    )
+                    val alongsideShiftY by animateFloatAsState(
+                        targetValue = if (isThinValue) {
+                            when (screenEdge) {
+                                ScreenEdge.TOP -> -44f
+                                ScreenEdge.BOTTOM -> 44f
+                                else -> 0f
+                            }
+                        } else 0f,
+                        animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f),
+                        label = "alongsideShiftY"
+                    )
 
                     Row(
-                        horizontalArrangement = if (screenEdge == ScreenEdge.RIGHT) Arrangement.spacedBy(if (isThinValue) 16.dp else 8.dp, Alignment.End) else Arrangement.spacedBy(if (isThinValue) 16.dp else 8.dp, Alignment.Start),
+                        horizontalArrangement = if (screenEdge == ScreenEdge.RIGHT) Arrangement.spacedBy(8.dp, Alignment.End) else Arrangement.spacedBy(8.dp, Alignment.Start),
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        if (screenEdge == ScreenEdge.RIGHT && showAlongside) {
+                        if (screenEdge == ScreenEdge.RIGHT) {
                             RingerModeTextLabel(
                                 text = ringerModeLabel,
                                 screenEdge = screenEdge,
@@ -3414,12 +3217,11 @@ class NudgeAccessibilityService : AccessibilityService() {
                                     isHudThin.value = false
                                     volumePressCount = 0
                                 },
-                                thinHudEdgeInsetDp = 0f,
+                                thinHudEdgeInsetDp = latestSettings.thinHudEdgeInsetDp,
                                 onDismiss = { dismissVolumeHud() },
                                 pillTransparency = latestSettings.volumeSliderPillTransparency,
                                 volumeSliderBlur = latestSettings.volumeSliderBlur,
                                 pillBlurDp = latestSettings.volumeSliderPillBlurDp,
-                                lightMode = latestSettings.lightMode,
                                 onVolumeScrub = { frac ->
                                     alongsideScrubFraction = frac
                                     appVolumeController.setAppVolume(primaryApp.uid, frac)
@@ -3435,7 +3237,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                                 onOpenMenu = {},
                                 interactive = visible,
                                 instantAppearance = isTransitionFromMixer,
-                                modifier = Modifier.wrapContentSize()
+                                modifier = Modifier.wrapContentSize().offset(x = alongsideShiftX.dp, y = alongsideShiftY.dp)
                             )
                         }
 
@@ -3446,17 +3248,19 @@ class NudgeAccessibilityService : AccessibilityService() {
                             hudCornerRadiusDp = latestSettings.hudCornerRadiusDp,
                             floatingMode = latestSettings.floatingMode,
                             edgeInsetDp = latestSettings.hudEdgeInsetDp,
-                            extraBezelDistancePx = dpToPx(latestSettings.hudWidthDp + 16f).toFloat(),
                             volumeFraction = volFraction,
                             isVisible = visible,
                             resetEpoch = resetEpoch,
                             isBluetoothConnected = isBtConnected,
-                            activeStreamType = currentStreamType,
-                            inCall = isCallActiveStream,
+                            activeStreamType = when (resolveActiveVolumeStream()) {
+                                ActiveVolumeStream.CALL -> AudioManager.STREAM_VOICE_CALL
+                                ActiveVolumeStream.RING -> AudioManager.STREAM_RING
+                                ActiveVolumeStream.MEDIA -> AudioManager.STREAM_MUSIC
+                            },
+                            inCall = volumeController.isCallActive(),
                             isMediaPlayingNow = audioManager.isMusicActive,
                             volumeSliderFluidityPercent = latestSettings.volumeSliderFluidityPercent,
-                            maxVolumeLimit = effectiveStreamLimit,
-                            callMinStep = callMinStep,
+                            maxVolumeLimit = mediaLimit,
                             customAppIcon = null,
                             showVolumeCounter = latestSettings.showVolumeCounter,
                             instantAppearance = isTransitionFromMixer,
@@ -3473,9 +3277,18 @@ class NudgeAccessibilityService : AccessibilityService() {
                             pillTransparency = latestSettings.volumeSliderPillTransparency,
                             volumeSliderBlur = latestSettings.volumeSliderBlur,
                             pillBlurDp = latestSettings.volumeSliderPillBlurDp,
-                            lightMode = latestSettings.lightMode,
                             onVolumeScrub = { fraction ->
-                                applyTargetActiveStreamFraction(fraction, latestSettings)
+                                val targetSteps = (fraction.coerceIn(0f, 1f) * mediaLimit.toFloat()).roundToInt().coerceIn(0, mediaLimit)
+                                val currentSteps = getStoredStepsForStream(AudioManager.STREAM_MUSIC)
+                                val changed = targetSteps != currentSteps
+                                volumeFraction.value = fraction
+                                if (changed) {
+                                    applyTargetMusicSteps(targetSteps)
+                                    lastProgrammaticAudioTimeMs = SystemClock.uptimeMillis()
+                                    if (latestSettings.effectiveVolumeSliderHaptics && !isMuteAllActive) {
+                                        volumeController.triggerHaptic(strong = false)
+                                    }
+                                }
                             },
                             onScrubStateChanged = { scrubbing ->
                                 hudScrubbing = scrubbing
@@ -3501,7 +3314,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                                 runCatching {
                                     audioManager.ringerMode = nextRinger
                                 }
-                                ringerModeState.value = nextRinger
                                 val modeText = when (nextRinger) {
                                     AudioManager.RINGER_MODE_NORMAL -> "SOUND"
                                     AudioManager.RINGER_MODE_VIBRATE -> "VIBRATE"
@@ -3522,7 +3334,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                             modifier = Modifier.wrapContentSize()
                         )
 
-                        if (screenEdge != ScreenEdge.RIGHT && showAlongside) {
+                        if (screenEdge != ScreenEdge.RIGHT) {
                             VolumeSliderHud(
                                 screenEdge = screenEdge,
                                 hudWidthDp = latestSettings.hudWidthDp,
@@ -3548,12 +3360,11 @@ class NudgeAccessibilityService : AccessibilityService() {
                                     isHudThin.value = false
                                     volumePressCount = 0
                                 },
-                                thinHudEdgeInsetDp = 0f,
+                                thinHudEdgeInsetDp = latestSettings.thinHudEdgeInsetDp,
                                 onDismiss = { dismissVolumeHud() },
                                 pillTransparency = latestSettings.volumeSliderPillTransparency,
                                 volumeSliderBlur = latestSettings.volumeSliderBlur,
                                 pillBlurDp = latestSettings.volumeSliderPillBlurDp,
-                                lightMode = latestSettings.lightMode,
                                 onVolumeScrub = { frac ->
                                     alongsideScrubFraction = frac
                                     appVolumeController.setAppVolume(primaryApp.uid, frac)
@@ -3569,7 +3380,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                                 onOpenMenu = {},
                                 interactive = visible,
                                 instantAppearance = isTransitionFromMixer,
-                                modifier = Modifier.wrapContentSize()
+                                modifier = Modifier.wrapContentSize().offset(x = alongsideShiftX.dp, y = alongsideShiftY.dp)
                             )
                             RingerModeTextLabel(
                                 text = ringerModeLabel,
@@ -3601,22 +3412,24 @@ class NudgeAccessibilityService : AccessibilityService() {
                                 hudCornerRadiusDp = latestSettings.hudCornerRadiusDp,
                                 floatingMode = latestSettings.floatingMode,
                                 edgeInsetDp = latestSettings.hudEdgeInsetDp,
-                                extraBezelDistancePx = dpToPx(latestSettings.hudWidthDp + 16f).toFloat(),
                                 volumeFraction = volFraction,
                                 isVisible = visible,
                                 resetEpoch = resetEpoch,
                                 isBluetoothConnected = isBtConnected,
-                                activeStreamType = currentStreamType,
-                                inCall = isCallActiveStream,
+                                activeStreamType = when (resolveActiveVolumeStream()) {
+                                    ActiveVolumeStream.CALL -> AudioManager.STREAM_VOICE_CALL
+                                    ActiveVolumeStream.RING -> AudioManager.STREAM_RING
+                                    ActiveVolumeStream.MEDIA -> AudioManager.STREAM_MUSIC
+                                },
+                                inCall = volumeController.isCallActive(),
                                 isMediaPlayingNow = audioManager.isMusicActive,
                                 volumeSliderFluidityPercent = latestSettings.volumeSliderFluidityPercent,
-                                maxVolumeLimit = effectiveStreamLimit,
-                                callMinStep = callMinStep,
+                                maxVolumeLimit = mediaLimit,
                                 customAppIcon = null,
                                 showVolumeCounter = latestSettings.showVolumeCounter,
                                 instantAppearance = isTransitionFromMixer,
                                 isMuteAllSounds = isMuteAllActive,
-                                isThin = isHudThin.collectAsState().value || (preview == PreviewTarget.THIN_HUD),
+                                isThin = isHudThin.collectAsState().value,
                                 isHoldingVolUpAtMax = isHoldingVolUpAtMax.collectAsState().value,
                                 isHoldingVolDownAtMin = isHoldingVolDownAtMin.collectAsState().value,
                                 onUserInteraction = {
@@ -3628,9 +3441,18 @@ class NudgeAccessibilityService : AccessibilityService() {
                                 pillTransparency = latestSettings.volumeSliderPillTransparency,
                                 volumeSliderBlur = latestSettings.volumeSliderBlur,
                                 pillBlurDp = latestSettings.volumeSliderPillBlurDp,
-                                lightMode = latestSettings.lightMode,
                                 onVolumeScrub = { fraction ->
-                                    applyTargetActiveStreamFraction(fraction, latestSettings)
+                                    val targetSteps = (fraction.coerceIn(0f, 1f) * mediaLimit.toFloat()).roundToInt().coerceIn(0, mediaLimit)
+                                    val currentSteps = getStoredStepsForStream(AudioManager.STREAM_MUSIC)
+                                    val changed = targetSteps != currentSteps
+                                    volumeFraction.value = fraction
+                                    if (changed) {
+                                        applyTargetMusicSteps(targetSteps)
+                                        lastProgrammaticAudioTimeMs = SystemClock.uptimeMillis()
+                                        if (latestSettings.effectiveVolumeSliderHaptics && !isMuteAllActive) {
+                                            volumeController.triggerHaptic(strong = false)
+                                        }
+                                    }
                                 },
                                 onScrubStateChanged = { scrubbing ->
                                     hudScrubbing = scrubbing
@@ -3656,7 +3478,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                                     runCatching {
                                         audioManager.ringerMode = nextRinger
                                     }
-                                    ringerModeState.value = nextRinger
                                     val modeText = when (nextRinger) {
                                         AudioManager.RINGER_MODE_NORMAL -> "SOUND"
                                         AudioManager.RINGER_MODE_VIBRATE -> "VIBRATE"
@@ -3706,22 +3527,24 @@ class NudgeAccessibilityService : AccessibilityService() {
                                 hudCornerRadiusDp = latestSettings.hudCornerRadiusDp,
                                 floatingMode = latestSettings.floatingMode,
                                 edgeInsetDp = latestSettings.hudEdgeInsetDp,
-                                extraBezelDistancePx = dpToPx(latestSettings.hudWidthDp + 16f).toFloat(),
                                 volumeFraction = volFraction,
                                 isVisible = visible,
                                 resetEpoch = resetEpoch,
                                 isBluetoothConnected = isBtConnected,
-                                activeStreamType = currentStreamType,
-                                inCall = isCallActiveStream,
+                                activeStreamType = when (resolveActiveVolumeStream()) {
+                                    ActiveVolumeStream.CALL -> AudioManager.STREAM_VOICE_CALL
+                                    ActiveVolumeStream.RING -> AudioManager.STREAM_RING
+                                    ActiveVolumeStream.MEDIA -> AudioManager.STREAM_MUSIC
+                                },
+                                inCall = volumeController.isCallActive(),
                                 isMediaPlayingNow = audioManager.isMusicActive,
                                 volumeSliderFluidityPercent = latestSettings.volumeSliderFluidityPercent,
-                                maxVolumeLimit = effectiveStreamLimit,
-                                callMinStep = callMinStep,
+                                maxVolumeLimit = mediaLimit,
                                 customAppIcon = null,
                                 showVolumeCounter = latestSettings.showVolumeCounter,
                                 instantAppearance = isTransitionFromMixer,
                                 isMuteAllSounds = isMuteAllActive,
-                                isThin = isHudThin.collectAsState().value || (preview == PreviewTarget.THIN_HUD),
+                                isThin = isHudThin.collectAsState().value,
                                 isHoldingVolUpAtMax = isHoldingVolUpAtMax.collectAsState().value,
                                 isHoldingVolDownAtMin = isHoldingVolDownAtMin.collectAsState().value,
                                 onUserInteraction = {
@@ -3733,9 +3556,18 @@ class NudgeAccessibilityService : AccessibilityService() {
                                 pillTransparency = latestSettings.volumeSliderPillTransparency,
                                 volumeSliderBlur = latestSettings.volumeSliderBlur,
                                 pillBlurDp = latestSettings.volumeSliderPillBlurDp,
-                                lightMode = latestSettings.lightMode,
                                 onVolumeScrub = { fraction ->
-                                    applyTargetActiveStreamFraction(fraction, latestSettings)
+                                    val targetSteps = (fraction.coerceIn(0f, 1f) * mediaLimit.toFloat()).roundToInt().coerceIn(0, mediaLimit)
+                                    val currentSteps = getStoredStepsForStream(AudioManager.STREAM_MUSIC)
+                                    val changed = targetSteps != currentSteps
+                                    volumeFraction.value = fraction
+                                    if (changed) {
+                                        applyTargetMusicSteps(targetSteps)
+                                        lastProgrammaticAudioTimeMs = SystemClock.uptimeMillis()
+                                        if (latestSettings.effectiveVolumeSliderHaptics && !isMuteAllActive) {
+                                            volumeController.triggerHaptic(strong = false)
+                                        }
+                                    }
                                 },
                                 onScrubStateChanged = { scrubbing ->
                                     hudScrubbing = scrubbing
@@ -3761,7 +3593,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                                     runCatching {
                                         audioManager.ringerMode = nextRinger
                                     }
-                                    ringerModeState.value = nextRinger
                                     val modeText = when (nextRinger) {
                                         AudioManager.RINGER_MODE_NORMAL -> "SOUND"
                                         AudioManager.RINGER_MODE_VIBRATE -> "VIBRATE"
@@ -3793,38 +3624,20 @@ class NudgeAccessibilityService : AccessibilityService() {
                     }
                 }
             }
-            val sliderContainer = object : FrameLayout(this) {
-                override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
-                    if (ev?.actionMasked == MotionEvent.ACTION_OUTSIDE && hudActive.value) {
-                        dismissVolumeHud()
-                        return true
-                    }
-                    return super.dispatchTouchEvent(ev)
+            sliderView.visibility = View.GONE
+            sliderView.setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_OUTSIDE && hudActive.value) {
+                    dismissVolumeHud()
+                    true
+                } else {
+                    false
                 }
-            }.apply {
-                lifecycleOwner.attachToView(this)
-                addView(
-                    sliderView,
-                    FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.MATCH_PARENT
-                    )
-                )
-                visibility = View.GONE
             }
             hudParams = sliderParams
-            hudView = sliderContainer
+            hudView = sliderView
             if (!OverlayBlurController.isSamsungBackendActive() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 runCatching {
-                    val dialog = object : Dialog(sliderContainer.context, R.style.Theme_Nudge_OverlayBlurDialog) {
-                        override fun onTouchEvent(event: MotionEvent): Boolean {
-                            if (event.action == MotionEvent.ACTION_OUTSIDE && hudActive.value) {
-                                dismissVolumeHud()
-                                return true
-                            }
-                            return super.onTouchEvent(event)
-                        }
-                    }.apply {
+                    val dialog = Dialog(sliderView.context, R.style.Theme_Nudge_OverlayBlurDialog).apply {
                         window?.apply {
                             setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
                             attributes = sliderParams
@@ -3838,15 +3651,15 @@ class NudgeAccessibilityService : AccessibilityService() {
                                 }
                             }
                         }
-                        setContentView(sliderContainer)
+                        setContentView(sliderView)
                     }
                     dialog.show()
                     hudDialog = dialog
                 }.onFailure {
-                    windowManager.addView(sliderContainer, sliderParams)
+                    windowManager.addView(sliderView, sliderParams)
                 }
             } else {
-                windowManager.addView(sliderContainer, sliderParams)
+                windowManager.addView(sliderView, sliderParams)
             }
         }
 
@@ -3856,7 +3669,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                 val isOpen by modalActive.collectAsState()
                 val latestSettings by effectiveSettingsState.collectAsState()
                 val volFraction by volumeFraction.collectAsState()
-                val callVol by callNormalizedVolumeState.collectAsState()
                 val isBtConnected by isBluetoothAudioConnected.collectAsState()
                 val latestRotation by rotationState.collectAsState()
                 val resolvedEdge = resolveActiveHudEdge(latestSettings, latestRotation)
@@ -3896,40 +3708,21 @@ class NudgeAccessibilityService : AccessibilityService() {
                     QuickVolumeModal(
                         volumeController = volumeController,
                         fineVolumeController = fineVolumeController,
-                        musicFractionExternal = if (::fineVolumeController.isInitialized) fineVolumeController.readSystemNormalizedVolume(AudioManager.STREAM_MUSIC) else mediaNormalizedVolume,
+                        musicFractionExternal = volFraction,
                         sliderWidthDp = latestSettings.hudWidthDp,
                         sliderHeightDp = latestSettings.hudHeightDp,
                         sliderCornerRadiusDp = latestSettings.hudCornerRadiusDp,
                         lightMode = latestSettings.lightMode,
                         hapticsEnabled = latestSettings.effectiveVolumeSliderHaptics && !isMuteAllSoundsActiveState.value,
                         isBluetoothConnected = isBtConnected,
-                        isCallActive = volumeController.isCallActive(this) || resolveActiveVolumeStream() == ActiveVolumeStream.CALL,
+                        isCallActive = volumeController.isCallActive() || resolveActiveVolumeStream() == ActiveVolumeStream.CALL,
                         isAlwaysShowCallSlider = latestSettings.isAlwaysShowCallSliderInMixer,
-                        callFractionExternal = if (volumeController.isCallActive(this) || resolveActiveVolumeStream() == ActiveVolumeStream.CALL) volFraction else callVol,
+                        callFractionExternal = if (::fineVolumeController.isInitialized) fineVolumeController.readSystemNormalizedVolume(AudioManager.STREAM_VOICE_CALL) else callNormalizedVolume,
                         onCallFractionChanged = { fraction ->
-                            val now = SystemClock.uptimeMillis()
-                            lastProgrammaticAudioTimeMs = now
-                            lastCallHardwareClickMs = now
-                            val applied = if (::fineVolumeController.isInitialized) {
+                            if (::fineVolumeController.isInitialized) {
                                 fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_VOICE_CALL, fraction)
-                            } else {
-                                val maxCall = volumeController.getStreamMax(AudioManager.STREAM_VOICE_CALL)
-                                val targetCoarse = (fraction * maxCall.toFloat()).roundToInt().coerceIn(1, maxCall)
-                                runCatching { audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, targetCoarse, 0) }
-                                fraction
-                            }
-                            callNormalizedVolume = applied
-                            callNormalizedVolumeState.value = applied
-                            if (resolveActiveVolumeStream() == ActiveVolumeStream.CALL || volumeController.isCallActive(this)) {
-                                volumeFraction.value = applied
                             }
                         },
-                        onStreamScrubStateChanged = { _, isScrubbing ->
-                            hudScrubbing = isScrubbing
-                        },
-                        ringFractionExternal = if (::fineVolumeController.isInitialized) fineVolumeController.readSystemNormalizedVolume(AudioManager.STREAM_RING) else ringNormalizedVolume,
-                        notificationFractionExternal = if (::fineVolumeController.isInitialized) fineVolumeController.readSystemNormalizedVolume(AudioManager.STREAM_NOTIFICATION) else null,
-                        alarmFractionExternal = if (::fineVolumeController.isInitialized) fineVolumeController.readSystemNormalizedVolume(AudioManager.STREAM_ALARM) else null,
                         isVisible = isMixerVisible,
                         isHoldingVolUpAtMax = isHoldingVolUpAtMax.collectAsState().value,
                         isHoldingVolDownAtMin = isHoldingVolDownAtMin.collectAsState().value,
@@ -3967,7 +3760,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                         sliderYFraction = resolvedFraction,
                         sliderXFraction = resolvedFraction,
                         sliderCenterDp = hudCenterDp,
-                        sliderEdgeInsetDp = latestSettings.hudEdgeInsetDp,
+                        sliderEdgeInsetDp = if (latestSettings.floatingMode) latestSettings.hudEdgeInsetDp else 0f,
                         volumeSliderFluidityPercent = latestSettings.volumeSliderFluidityPercent,
                         mediaMaxVolumeLimit = mediaLimit,
                         callMaxVolumeLimit = callLimit,
@@ -4020,7 +3813,6 @@ class NudgeAccessibilityService : AccessibilityService() {
             val latestRotation by rotationState.collectAsState()
             val active by dndActive.collectAsState()
             val isSilentOrDnd by dndState.collectAsState()
-            val currentRinger by ringerModeState.collectAsState()
             val activeModeOverride by dndActiveModeTypeState.collectAsState()
             val preview by effectivePreviewTargetState.collectAsState()
 
@@ -4037,13 +3829,8 @@ class NudgeAccessibilityService : AccessibilityService() {
                 showLabel = latestSettings.showDndLabel,
                 modeType = activeModeOverride ?: latestSettings.dndModeType,
                 isSilentOrDndActive = isSilentOrDnd,
-                currentRingerMode = currentRinger,
-                includeSound = latestSettings.dndIncludeSound,
-                includeVibrate = latestSettings.dndIncludeVibrate,
-                includeSilent = latestSettings.dndIncludeSilent,
                 isVisible = visible,
                 onSelectState = { active: Boolean -> setDndState(active) },
-                onSelectRingerMode = { mode: Int -> setRingerMode(mode) },
                 onPauseAutoHideTimer = { pauseDndAutoHideTimer() },
                 onRestartAutoHideTimer = { restartDndAutoHideTimer() },
                 onDismiss = { dismissDndOverlay() },
@@ -4216,7 +4003,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                     swipeActive = (up || down) &&
                         settings.hudTriggerMode == HudTriggerMode.SWIPE_FROM_POP &&
                         !hud,
-                    hudVisible = hud || preview == PreviewTarget.HUD || preview == PreviewTarget.VOLUME_SLIDER || preview == PreviewTarget.THIN_HUD,
+                    hudVisible = hud || preview == PreviewTarget.HUD || preview == PreviewTarget.VOLUME_SLIDER,
                     hasAlongsideApp = settings.isPerAppVolumeEnabled &&
                         settings.perAppVolumeDisplayMode == "ALONGSIDE_SLIDER" &&
                         activeApps.isNotEmpty()
@@ -4261,13 +4048,12 @@ class NudgeAccessibilityService : AccessibilityService() {
                         }
                     } else if (hView.visibility == View.VISIBLE) {
                         hudCollapseGoneJob?.cancel()
-                        if (hudDialog != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            runCatching { hudDialog?.window?.setBackgroundBlurRadius(0) }
-                        }
                         hudCollapseGoneJob = serviceScope.launch {
-                            delay(200L)
+                            delay(320L)
                             hudView?.visibility = View.GONE
-                            isHudThin.value = false
+                            if (hudDialog != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                runCatching { hudDialog?.window?.setBackgroundBlurRadius(0) }
+                            }
                         }
                     }
 
@@ -4277,8 +4063,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                     )
                     val isPreviewActive = LivePreviewController.state.value.activeTarget != PreviewTarget.NONE ||
                         effectivePreviewTargetState.value == PreviewTarget.HUD ||
-                        effectivePreviewTargetState.value == PreviewTarget.VOLUME_SLIDER ||
-                        effectivePreviewTargetState.value == PreviewTarget.THIN_HUD
+                        effectivePreviewTargetState.value == PreviewTarget.VOLUME_SLIDER
                     val touchable = effectiveVisible && hudActive.value && !isPreviewActive
                     val hudSpec = buildHudLayoutSpec(
                         settings = snapshot.settings,
@@ -4508,12 +4293,10 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     private fun updatePersistentNudgeCatchersTouchability(rotation: Int = rotationState.value) {
         val settings = effectiveSettingsState.value
-        val activeTriggerId = activeNudgePanelTriggerId.value
         for (holder in persistentNudgeCatchers) {
             val nudge = settings.persistentNudges.firstOrNull { it.id == holder.nudgeId } ?: continue
-            val isTriggeringNudge = activeTriggerId != null && nudge.id == activeTriggerId
-            val obscured = isTriggeringNudge || !isPersistentNudgeVisible.value
-            val shouldBeTouchable = !obscured && nudge.enabled && !isCurrentAppExcludedFast
+            val obscured = isAnyOverlayAboveNudge(nudge, rotation)
+            val shouldBeTouchable = !obscured && nudge.enabled
             val desiredFlags = if (shouldBeTouchable) {
                 baseOverlayFlags() and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             } else {
@@ -4541,8 +4324,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             val hudEdge = resolveActiveHudEdge(settings, rotation)
             val isPreviewActive = LivePreviewController.state.value.activeTarget != PreviewTarget.NONE ||
                 effectivePreviewTargetState.value == PreviewTarget.HUD ||
-                effectivePreviewTargetState.value == PreviewTarget.VOLUME_SLIDER ||
-                effectivePreviewTargetState.value == PreviewTarget.THIN_HUD
+                effectivePreviewTargetState.value == PreviewTarget.VOLUME_SLIDER
             val touchable = hudAllowed && hudActive.value && !isPreviewActive
             applyLayoutSpecIfChanged(
                 hView,
@@ -4745,12 +4527,11 @@ class NudgeAccessibilityService : AccessibilityService() {
         val insetDp = maxOf(settings.hudEdgeInsetDp, settings.thinHudEdgeInsetDp)
         val hasAlongsideApp = hasAlongsideAppOverride ?: (settings.isPerAppVolumeEnabled &&
             settings.perAppVolumeDisplayMode == "ALONGSIDE_SLIDER" &&
-            (!isHudThin.value || settings.showThinPerAppVolumeHud) &&
             ::appVolumeController.isInitialized &&
             appVolumeController.activeMediaApps.value.isNotEmpty())
         val thicknessMultiplier = if (hasAlongsideApp) 2.2f else 1f
-        val thicknessPx = dpToPx(computeHudCutoutThicknessDp(settings.hudWidthDp, insetDp) * thicknessMultiplier + 24f)
-        val spanPx = dpToPx(computeHudOuterSpanDp(settings.hudHeightDp, settings.volumeSliderFluidityPercent) + 60f)
+        val thicknessPx = dpToPx(computeHudCutoutThicknessDp(settings.hudWidthDp, insetDp) * thicknessMultiplier + 140f)
+        val spanPx = dpToPx(computeHudOuterSpanDp(settings.hudHeightDp, settings.volumeSliderFluidityPercent))
         val width = if (isVertical) thicknessPx else spanPx
         val height = if (isVertical) spanPx else thicknessPx
         val (screenW, screenH) = screenSizeState.value
@@ -5142,16 +4923,17 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         nudgeMenuDismissJob?.cancel()
         nudgeMenuDismissJob = null
+        isPersistentNudgeVisible.value = false
         nudgeMenuView?.visibility = View.VISIBLE
         nudgeMenuActive.value = true
         nudgeMenuShowingState.value = true
+        persistentNudgeCatchers.forEach { it.view.visibility = View.GONE }
         updatePersistentNudgeCatchersTouchability()
     }
 
     private fun dismissNudgeMenu() {
         nudgeMenuDismissJob?.cancel()
         nudgeMenuActive.value = false
-        checkResetActiveNudgePanelTrigger()
         updatePersistentNudgeCatchersTouchability()
         nudgeMenuDismissJob = serviceScope.launch {
             delay(260L)
@@ -5162,7 +4944,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 nudgeMenuWidthOverride.value = null
                 nudgeMenuHeightOverride.value = null
                 nudgeMenuYFractionOverride.value = null
-                checkResetActiveNudgePanelTrigger()
+                isPersistentNudgeVisible.value = true
                 updatePersistentNudgeCatchersTouchability()
             }
         }
@@ -5170,27 +4952,6 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     private fun executePersistentNudgeAction(action: PersistentNudgeAction, edge: ScreenEdge, targetPackage: String = "", selectedApps: List<NudgeMenuApp> = emptyList(), customNudge: PersistentNudge? = null) {
         val currentSettings = effectiveSettingsState.value
-        if (customNudge != null) {
-            when (action) {
-                PersistentNudgeAction.VOLUME_SLIDER_HUD,
-                PersistentNudgeAction.AUDIO_MIXER,
-                PersistentNudgeAction.ACTIONS_PANEL,
-                PersistentNudgeAction.DND_PANEL,
-                PersistentNudgeAction.TOGGLE_DND,
-                PersistentNudgeAction.TOGGLE_SILENT_RING,
-                PersistentNudgeAction.NUDGE_MENU -> {
-                    activeNudgePanelTriggerId.value = customNudge.id
-                    updatePersistentNudgeCatchersTouchability()
-                }
-                PersistentNudgeAction.OPEN_APP -> {
-                    if (selectedApps.size > 1 || (selectedApps.isEmpty() && targetPackage.isBlank())) {
-                        activeNudgePanelTriggerId.value = customNudge.id
-                        updatePersistentNudgeCatchersTouchability()
-                    }
-                }
-                else -> {}
-            }
-        }
         when (action) {
             PersistentNudgeAction.VOLUME_SLIDER_HUD -> {
                 handleHudTrigger(settings = currentSettings, initialPress = true)
@@ -5231,41 +4992,68 @@ class NudgeAccessibilityService : AccessibilityService() {
                 }
                 dndState.value = currentActive
                 showDndOverlay(currentSettings.dndTimeoutMs)
+                if (currentSettings.effectiveDndPanelHaptics) {
+                    audioScope?.launch { volumeController.triggerHaptic(strong = true) }
+                }
             }
             PersistentNudgeAction.TOGGLE_DND -> {
                 dndActiveModeTypeState.value = DndModeType.DND_ON_OFF
-                val isCurrentlyActive = DndController.isDndActive(notificationManager, this)
-                val targetActive = !isCurrentlyActive
-                serviceScope.launch {
-                    dndController.setDndState(targetActive, currentSettings.useShizukuForDnd)
+                val hasPolicyAccess = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    notificationManager.isNotificationPolicyAccessGranted
+                } else {
+                    true
+                }
+                val targetActive: Boolean = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && hasPolicyAccess) {
+                    val currentFilter = notificationManager.currentInterruptionFilter
+                    if (currentFilter == NotificationManager.INTERRUPTION_FILTER_ALL) {
+                        runCatching {
+                            notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+                        }
+                        true
+                    } else {
+                        runCatching {
+                            notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+                        }
+                        false
+                    }
+                } else {
+                    val liveRinger = audioManager.ringerMode
+                    if (liveRinger == AudioManager.RINGER_MODE_NORMAL) {
+                        runCatching { audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT }
+                        true
+                    } else {
+                        runCatching { audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL }
+                        false
+                    }
                 }
                 dndState.value = targetActive
                 showDndOverlay(currentSettings.dndTimeoutMs)
+                if (currentSettings.effectiveDndPanelHaptics) {
+                    audioScope?.launch { volumeController.triggerHaptic(strong = true) }
+                }
             }
             PersistentNudgeAction.TOGGLE_SILENT_RING -> {
                 dndActiveModeTypeState.value = DndModeType.SILENT_RING
-                val enabledModes = buildList {
-                    if (currentSettings.dndIncludeSound) add(AudioManager.RINGER_MODE_NORMAL)
-                    if (currentSettings.dndIncludeVibrate) add(AudioManager.RINGER_MODE_VIBRATE)
-                    if (currentSettings.dndIncludeSilent) add(AudioManager.RINGER_MODE_SILENT)
-                }.ifEmpty { listOf(AudioManager.RINGER_MODE_NORMAL, AudioManager.RINGER_MODE_VIBRATE, AudioManager.RINGER_MODE_SILENT) }
-
-                val currentRinger = audioManager.ringerMode
-                val curIdx = enabledModes.indexOf(currentRinger)
-                val nextRinger = if (curIdx >= 0) {
-                    enabledModes[(curIdx + 1) % enabledModes.size]
+                val liveRinger = audioManager.ringerMode
+                val targetActive = if (liveRinger == AudioManager.RINGER_MODE_NORMAL) {
+                    runCatching {
+                        audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+                    }
+                    true
                 } else {
-                    enabledModes.first()
+                    runCatching {
+                        audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+                    }
+                    false
                 }
-                runCatching {
-                    audioManager.ringerMode = nextRinger
-                }
-                ringerModeState.value = nextRinger
-                dndState.value = (nextRinger != AudioManager.RINGER_MODE_NORMAL)
+                dndState.value = targetActive
                 showDndOverlay(currentSettings.dndTimeoutMs)
+                if (currentSettings.effectiveDndPanelHaptics) {
+                    audioScope?.launch { volumeController.triggerHaptic(strong = true) }
+                }
             }
             PersistentNudgeAction.ACTIONS_PANEL -> {
-                showActionsPanel(playHaptic = false)
+                showActionsPanel()
             }
             PersistentNudgeAction.NUDGE_MENU -> {
                 if (nudgeMenuActive.value) {
@@ -5387,10 +5175,11 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     private fun isAnyOverlayAboveNudge(nudge: PersistentNudge, rotation: Int): Boolean {
-        if (activeNudgePanelTriggerId.value != null && nudge.id == activeNudgePanelTriggerId.value) {
-            return true
-        }
-        if (effectivePreviewTargetState.value != PreviewTarget.NONE || LivePreviewController.state.value.activeTarget != PreviewTarget.NONE) {
+        if (modalActive.value || dndActive.value || modesActive.value || nudgeMenuActive.value ||
+            nudgeMenuShowingState.value || nudgeMenuOnlyApps.value != null ||
+            effectivePreviewTargetState.value == PreviewTarget.NUDGE_MENU || effectivePreviewTargetState.value == PreviewTarget.OPEN_APPS_MENU ||
+            LivePreviewController.state.value.activeTarget == PreviewTarget.NUDGE_MENU || LivePreviewController.state.value.activeTarget == PreviewTarget.OPEN_APPS_MENU ||
+            nudgeMenuView?.visibility == View.VISIBLE) {
             return true
         }
         val settings = effectiveSettingsState.value
@@ -5460,7 +5249,7 @@ class NudgeAccessibilityService : AccessibilityService() {
 
             val portraitSide = if (nudge.edge == ScreenEdge.LEFT) EdgeSide.LEFT else EdgeSide.RIGHT
             val physicalEdge = EdgeOrientationMapper.resolvePhysicalEdge(portraitSide, rotation)
-            val swipeThreshold = dpToPx(10f).toFloat()
+            val swipeThreshold = dpToPx(14f).toFloat()
             when (motion.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     startX = motion.rawX
@@ -5490,7 +5279,17 @@ class NudgeAccessibilityService : AccessibilityService() {
                 }
                 MotionEvent.ACTION_UP,
                 MotionEvent.ACTION_CANCEL -> {
-                    triggered = false
+                    if (!triggered) {
+                        val dx = abs(motion.rawX - startX)
+                        val dy = abs(motion.rawY - startY)
+                        if (dx < swipeThreshold && dy < swipeThreshold) {
+                            triggered = true
+                            if (effectiveSettingsState.value.effectiveNudgeHaptics) {
+                                volumeController.triggerHaptic(strong = true)
+                            }
+                            executePersistentNudgeAction(nudge.action, physicalEdge, nudge.targetPackage, nudge.selectedApps, nudge)
+                        }
+                    }
                     true
                 }
                 else -> false
@@ -5518,11 +5317,6 @@ class NudgeAccessibilityService : AccessibilityService() {
             val catcherThickness = dpToPx(settings.nudgeWidthDp + 24f)
             val catcherLength = dpToPx(settings.nudgeHeightDp + 24f)
 
-            val axisFraction = EdgeOrientationMapper.resolveAxisFraction(nudge.yFraction, rotation)
-            val axisLength = (if (isVertical) screenH else screenW).toFloat()
-            val centerPos = axisLength * axisFraction
-            val offsetFromTopOrLeft = (centerPos - catcherLength * 0.5f).roundToInt().coerceIn(0, (axisLength - catcherLength).toInt())
-
             val params = WindowManager.LayoutParams(
                 if (isVertical) catcherThickness else catcherLength,
                 if (isVertical) catcherLength else catcherThickness,
@@ -5538,10 +5332,12 @@ class NudgeAccessibilityService : AccessibilityService() {
                 }
                 if (isVertical) {
                     x = 0
-                    y = offsetFromTopOrLeft
+                    val span = screenH - catcherLength
+                    y = (span * nudge.yFraction.coerceIn(0f, 1f)).roundToInt()
                 } else {
-                    x = offsetFromTopOrLeft
                     y = 0
+                    val span = screenW - catcherLength
+                    x = (span * nudge.yFraction.coerceIn(0f, 1f)).roundToInt()
                 }
                 applyEdgeCutoutAndInsets()
             }

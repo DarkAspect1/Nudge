@@ -141,7 +141,6 @@ private data class MixerChannelItem(
     val fraction: Float,
     val isPrimary: Boolean,
     val maxVolumeLimit: Int = 100,
-    val callMinStep: Int = 0,
     val customAppIcon: Drawable? = null,
     val streamType: Int? = null,
     val onIconTap: () -> Unit,
@@ -410,7 +409,7 @@ fun QuickVolumeModal(
     val coroutineScope = rememberCoroutineScope()
     val expansionProgress = remember { Animatable(if (isVisible) 1f else 0f) }
 
-    var localCallFraction by remember(callFractionExternal) {
+    var localCallFraction by remember {
         mutableFloatStateOf(
             callFractionExternal
                 ?: fineVolumeController?.readSystemNormalizedVolume(AudioManager.STREAM_VOICE_CALL)
@@ -461,7 +460,7 @@ fun QuickVolumeModal(
     }
 
     val transFraction = (pillTransparency / 100f).coerceIn(0f, 1f)
-    val containerColor = if (lightMode) Color.White else Color.Black
+    val containerColor = if (lightMode) Color(0xFFEFEFF4) else Color.Black
     val titleColor = if (lightMode) Color(0xFF1C1C1E) else Color.White
     val labelColor = if (lightMode) Color(0xFF1C1C1E).copy(alpha = 0.88f) else Color.White.copy(alpha = 0.90f)
     val percentColor = if (lightMode) Color(0xFF636366) else Color.White.copy(alpha = 0.62f)
@@ -585,7 +584,6 @@ fun QuickVolumeModal(
                     fraction = callFraction.coerceIn(0f, 1f),
                     isPrimary = isCallActive,
                     maxVolumeLimit = callMaxVolumeLimit,
-                    callMinStep = fineVolumeController?.let { it.getEffectiveMinIndex(AudioManager.STREAM_VOICE_CALL) * FineVolumeController.FINE_MULTIPLIER } ?: 10,
                     streamType = AudioManager.STREAM_VOICE_CALL,
                     onIconTap = {
                         val minFrac = fineVolumeController?.getStreamMinNormalizedFraction(AudioManager.STREAM_VOICE_CALL) ?: 0.10f
@@ -595,10 +593,7 @@ fun QuickVolumeModal(
                         } else {
                             lastCallOnFraction.coerceAtLeast(0.35f)
                         }
-                        localCallFraction = next
-                        if (onCallFractionChanged != null) {
-                            onCallFractionChanged.invoke(next)
-                        } else if (onStreamFractionChanged != null) {
+                        if (onStreamFractionChanged != null) {
                             onStreamFractionChanged(AudioManager.STREAM_VOICE_CALL, next)
                         } else if (fineVolumeController != null) {
                             val applied = fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_VOICE_CALL, next)
@@ -607,6 +602,7 @@ fun QuickVolumeModal(
                             volumeController.setStreamFraction(AudioManager.STREAM_VOICE_CALL, next)
                             localCallFraction = volumeController.getStreamFraction(AudioManager.STREAM_VOICE_CALL)
                         }
+                        onCallFractionChanged?.invoke(next)
                         if (hapticsEnabled) volumeController.triggerHaptic()
                     },
                     onValueChange = { value ->
@@ -614,9 +610,7 @@ fun QuickVolumeModal(
                         val effectiveValue = value.coerceIn(minFrac, 1f)
                         if (effectiveValue > 0.01f) lastCallOnFraction = effectiveValue
                         localCallFraction = effectiveValue
-                        if (onCallFractionChanged != null) {
-                            onCallFractionChanged.invoke(effectiveValue)
-                        } else if (onStreamFractionChanged != null) {
+                        if (onStreamFractionChanged != null) {
                             onStreamFractionChanged(AudioManager.STREAM_VOICE_CALL, effectiveValue)
                         } else if (fineVolumeController != null) {
                             val applied = fineVolumeController.setStreamFromTouchDrag(AudioManager.STREAM_VOICE_CALL, effectiveValue)
@@ -624,6 +618,7 @@ fun QuickVolumeModal(
                         } else {
                             volumeController.setStreamFraction(AudioManager.STREAM_VOICE_CALL, effectiveValue)
                         }
+                        onCallFractionChanged?.invoke(effectiveValue)
                     }
                 )
             )
@@ -1076,7 +1071,7 @@ fun QuickVolumeModal(
                         }
                         canvas.nativeCanvas.drawPath(housingPath.asAndroidPath(), shadowPaint)
                     }
-                    drawPath(housingPath, if (lightMode) Color.White else Color.Black)
+                    drawPath(housingPath, Color.Black)
 
                     if (pillTransparency > 0 || volumeSliderBlur > 0f) {
                         val pillHPx = effectivePillHeightDp.dp.toPx()
@@ -1154,14 +1149,12 @@ fun QuickVolumeModal(
                                 percentColor = percentColor,
                                 iconTintOverride = if (channel.streamIcon == MixerStreamIcon.BLUETOOTH) BluetoothRed else null,
                                 maxVolumeLimit = channel.maxVolumeLimit,
-                                callMinStep = channel.callMinStep,
                                 customAppIcon = channel.customAppIcon,
                                 streamType = channel.streamType,
                                 pillTransparency = pillTransparency,
                                 volumeSliderBlur = volumeSliderBlur,
                                 pillBlurDp = pillBlurDp,
                                 isModalVisible = isVisible,
-                                lightMode = lightMode,
                                 onIconTap = channel.onIconTap,
                                 onValueChange = channel.onValueChange,
                                 onScrubStateChanged = { scrubbing ->
@@ -1289,14 +1282,12 @@ fun QuickVolumeModal(
                                 percentColor = percentColor,
                                 iconTintOverride = if (channel.streamIcon == MixerStreamIcon.BLUETOOTH) BluetoothRed else null,
                                 maxVolumeLimit = channel.maxVolumeLimit,
-                                callMinStep = channel.callMinStep,
                                 customAppIcon = channel.customAppIcon,
                                 streamType = channel.streamType,
                                 pillTransparency = pillTransparency,
                                 volumeSliderBlur = volumeSliderBlur,
                                 pillBlurDp = pillBlurDp,
                                 isModalVisible = isVisible,
-                                lightMode = lightMode,
                                 onIconTap = channel.onIconTap,
                                 onValueChange = channel.onValueChange,
                                 onScrubStateChanged = { scrubbing ->
@@ -1394,14 +1385,12 @@ private fun VerticalStreamPill(
     percentColor: Color,
     iconTintOverride: Color? = null,
     maxVolumeLimit: Int = 100,
-    callMinStep: Int = 0,
     customAppIcon: Drawable? = null,
     streamType: Int? = null,
     pillTransparency: Int = 0,
     volumeSliderBlur: Float = 0f,
     pillBlurDp: Float = 0f,
     isModalVisible: Boolean = true,
-    lightMode: Boolean = false,
     onIconTap: () -> Unit,
     onValueChange: (Float) -> Unit,
     onScrubStateChanged: ((Boolean) -> Unit)? = null,
@@ -1419,8 +1408,8 @@ private fun VerticalStreamPill(
     val currentOnScrubStateChanged by rememberUpdatedState(onScrubStateChanged)
 
     val isCall = streamType == AudioManager.STREAM_VOICE_CALL
-    val effCallMinStep = if (isCall) callMinStep.coerceAtLeast(1) else 0
-    val minFraction = if (isCall && maxVolumeLimit > 0) (effCallMinStep.toFloat() / maxVolumeLimit.toFloat()).coerceIn(0f, 1f) else 0f
+    val maxCallSteps = (maxVolumeLimit / FineVolumeController.FINE_MULTIPLIER).coerceAtLeast(1)
+    val minFraction = if (isCall) (1f / maxCallSteps.toFloat()).coerceIn(0f, 1f) else 0f
 
     var isDragging by remember { mutableStateOf(false) }
     var localValue by remember { mutableFloatStateOf(fraction.coerceIn(minFraction, 1f)) }
@@ -1644,7 +1633,8 @@ private fun VerticalStreamPill(
 
             val fillTop = (pillH - pillH * clamped).coerceIn(0f, pillH)
             val currentSteps = if (isCall) {
-                (clamped * maxVolumeLimit).roundToInt().coerceIn(effCallMinStep, maxVolumeLimit)
+                val minFine = 10
+                (clamped * maxVolumeLimit).roundToInt().coerceIn(minFine, maxVolumeLimit)
             } else {
                 (clamped * maxVolumeLimit).roundToInt().coerceIn(0, maxVolumeLimit)
             }
@@ -1670,7 +1660,7 @@ private fun VerticalStreamPill(
             clipPath(pillPath) {
                 if (clamped > 0.002f) {
                     drawRect(
-                        color = if (lightMode) Color.Black else VerticalPillFill,
+                        color = VerticalPillFill,
                         topLeft = Offset(0f, fillTop),
                         size = Size(pillW, pillH - fillTop)
                     )
@@ -1678,14 +1668,13 @@ private fun VerticalStreamPill(
 
                 if (fillTop > 0f) {
                     clipRect(0f, 0f, pillW, fillTop) {
-                        val onUnfilledColor = if (lightMode) Color(0xFF1C1C1E) else VerticalIconOnDark
-                        val tintColor = iconTintOverride ?: if (isMuted) VerticalIconOffGray else onUnfilledColor
+                        val tintColor = iconTintOverride ?: if (isMuted) VerticalIconOffGray else VerticalIconOnDark
                         drawIntoCanvas { canvas ->
                             val textPaint = android.graphics.Paint().apply {
                                 isAntiAlias = true
                                 textAlign = android.graphics.Paint.Align.CENTER
                                 textSize = counterTextSize
-                                color = onUnfilledColor.toArgb()
+                                color = VerticalIconOnDark.toArgb()
                                 typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                             }
                             val baseline = counterCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
@@ -1696,7 +1685,7 @@ private fun VerticalStreamPill(
                                 isAntiAlias = true
                                 textAlign = android.graphics.Paint.Align.CENTER
                                 textSize = labelTextSize
-                                color = onUnfilledColor.toArgb()
+                                color = VerticalIconOnDark.toArgb()
                                 typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                             }
                             val fittedLabel = android.text.TextUtils.ellipsize(
@@ -1743,14 +1732,13 @@ private fun VerticalStreamPill(
 
                 if (fillTop < pillH) {
                     clipRect(0f, fillTop, pillW, pillH) {
-                        val onFillColor = if (lightMode) Color.White else VerticalIconOnWhite
-                        val tintColor = if (isMuted) VerticalIconOffGray else onFillColor
+                        val tintColor = if (isMuted) VerticalIconOffGray else VerticalIconOnWhite
                         drawIntoCanvas { canvas ->
                             val textPaint = android.graphics.Paint().apply {
                                 isAntiAlias = true
                                 textAlign = android.graphics.Paint.Align.CENTER
                                 textSize = counterTextSize
-                                color = onFillColor.toArgb()
+                                color = VerticalIconOnWhite.toArgb()
                                 typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                             }
                             val baseline = counterCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
@@ -1761,7 +1749,7 @@ private fun VerticalStreamPill(
                                 isAntiAlias = true
                                 textAlign = android.graphics.Paint.Align.CENTER
                                 textSize = labelTextSize
-                                color = onFillColor.toArgb()
+                                color = VerticalIconOnWhite.toArgb()
                                 typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                             }
                             val fittedLabel = android.text.TextUtils.ellipsize(
