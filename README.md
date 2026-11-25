@@ -1,4 +1,4 @@
-# Nudge
+# Nudge Edge
 
 The app shows edge pops when you press the volume or power buttons, volume slider, two action/modes panels and nudge persistant panels. Its Based on a concept design that has now become a reality.
 
