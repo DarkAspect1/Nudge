@@ -1,6 +1,6 @@
 # Nudge Edge
 
-The app shows edge pops as you volume or power buttons, redesigned volume slider, actions & modes panels and nudge edge handles. Its Based on a concept design that has now become a reality.
+The app shows edge pops as you volume or power buttons, redesigned volume slider, actions & modes panels and edge handles. Its Based on a concept design that has now become a reality.
 
 <p align="center">
   <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/DarkAspect1/Nudge">
