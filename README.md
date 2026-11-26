@@ -47,7 +47,7 @@
 - **Modes/Actions panel:** add new custom modes with custom icons/colors/names or even edit the existing ones and change their order like how you want it to be! **How it works:** it sends a quick silent notification that can be used by different automation/routine apps to do the functionality you want. or even better, for automation apps specifically that can receive broadcasts, the app sends a broadcast when a mode is selected alongside the silent notification (there's a guide in the app for detailed info)
 - **Both panels are triggered using side buttons** with up to 7 different combinations (custom buttons included for devices that has an additional button). When the panels are open, you can switch between modes using volume buttons or gesture swiping!
 
- ---
+   ---
 - **Nudge Edge handles:** open by swiping: Run actions like screenshots, flashlight, camera, and more.
 **Up to 10 nudges.**
   
@@ -57,11 +57,11 @@
 
 **Open Apps Menu:** choose your favourite apps, re-order them as you like, and cycle between them
 
- ---
+   ---
 - **Individual app volume:** every app that has a sound shows a slider with the app name and icon **Must note that it uses Shizuku**
 - **Volume Counter:** Show volume count on your volume slider, applies to individual app volume slider too.
 
- ---
+   ---
 - **Shizuku Implementation:**
   
 **Grant all permissions with a single click**
@@ -76,12 +76,12 @@
 
 **Use shizuku for hold power button**
 
----
+  ---
 - **All panels activity:** all panels are accessible from activity launcher or any similar feature in different apps.
 - **Tapping anywhere on the screen dismisses the panels**
 - **Want haptics too? there's a whole section for that part:** every panel has a separate switch
   
- ---
+   ---
 ## Problems and how to fix them
 
 ### Play protect flagged the app?
@@ -99,7 +99,8 @@
 
 - **WHY it happens:** Because the app is installed from outside the playstore and has accessibility permission, and since banking apps has a hardened system of checking the device for potential security threats, it will see that the app might be dangerous and shows a warning or refuses to open. (yes, accessibility service might be dangerous if its **misused** because it allows the app that has the accessibility permission to control the screen. **However, my app only needs it to display overlays like edge pop, volume slider, dnd and actions panels**)
 - **How to bypass the warning: Requires Shizuku:** Grant shizuku permission in settings tab, manage cloaked apps, select your banking app and hit done.
-  
+
+    ---
 ## Two variants of the app
 - Online variant has internet permission, shows app updates and checks for them in selected periods or manually, and provides in-app updates.
 - Offline variant doesnt show updates at all and doesnt have internet permission
