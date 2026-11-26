@@ -2,7 +2,7 @@
   <img src="assets/NudgeIcon.png" alt="Nudge Edge icon" width="128" height="128">
 </p>
 
-<h1 align="center">Nudge Edge</h1>
+<h1 align="center">Nudge</h1>
 
 <p align="center">
   A highly customizable app that shows edge pops/animations, a redesigned volume slider, actions & modes panels and edge handles.<br>
