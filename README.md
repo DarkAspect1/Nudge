@@ -1,10 +1,31 @@
-# Nudge Edge
+<p align="center">
+  <img src="assets/NudgeIcon.png" alt="Nudge Edge icon" width="128" height="128">
+</p>
 
-A highly customizable app that shows edge pops/animations, redesigned volume slider, actions & modes panels and edge handles. Its Based on a concept design that has now become a reality.
+<h1 align="center">Nudge Edge</h1>
 
 <p align="center">
-  <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/DarkAspect1/Nudge">
-    <img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="56">
+  A highly customizable app that shows edge pops/animations, a redesigned volume slider, actions & modes panels and edge handles.<br>
+  Based on a concept design that has now become a reality.
+</p>
+
+<p align="center">
+  <a href="https://github.com/DarkAspect1/Nudge-Edge/releases/latest">
+    <img src="https://img.shields.io/github/downloads/DarkAspect1/Nudge-Edge/total?style=flat&logo=github&logoColor=white&label=Downloads&labelColor=1f1f2e&color=6c5ce7" alt="Total downloads">
+  </a>
+  <a href="https://github.com/DarkAspect1/Nudge-Edge/releases/latest">
+    <img src="https://img.shields.io/github/v/release/DarkAspect1/Nudge-Edge?style=flat&logo=github&logoColor=white&label=Release&labelColor=1f1f2e&color=00b894" alt="Latest release">
+  </a>
+  <a href="https://github.com/DarkAspect1/Nudge-Edge/stargazers">
+    <img src="https://img.shields.io/github/stars/DarkAspect1/Nudge-Edge?style=flat&logo=github&logoColor=white&label=Stars&labelColor=1f1f2e&color=fdcb6e" alt="Stars">
+  </a>
+  <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat&logo=android&logoColor=white&labelColor=1f1f2e" alt="Android 8.0+">
+  <img src="https://img.shields.io/badge/Shizuku-supported-0984e3?style=flat&labelColor=1f1f2e" alt="Shizuku supported">
+</p>
+
+<p align="center">
+  <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/DarkAspect1/Nudge-Edge">
+    <img src="assets/badge_obtainium_rounded.svg" alt="Get it on Obtainium" height="56">
   </a>
 </p>
 
