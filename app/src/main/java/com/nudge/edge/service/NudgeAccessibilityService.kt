@@ -412,7 +412,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             currentSettings.isEdgePopMasterEnabled &&
             (button != ButtonType.POWER || currentSettings.enablePowerButtonPop)
 
-        val isCanceled = (event.flags and KeyEvent.FLAG_CANCELED) != 0
+        val isCanceled = (event.flags and (KeyEvent.FLAG_CANCELED or KeyEvent.FLAG_CANCELED_LONG_PRESS)) != 0
         if (isCanceled) {
             isButtonPhysicallyHeld[button] = false
             edgePopPanelScrollSafetyJobs[button]?.cancel()
@@ -1125,6 +1125,17 @@ class NudgeAccessibilityService : AccessibilityService() {
             event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             val pkg = event.packageName?.toString()
             val className = event.className?.toString()
+            val isScreenshotEvent = pkg?.contains("screenshot", ignoreCase = true) == true ||
+                className?.contains("screenshot", ignoreCase = true) == true
+            if (isScreenshotEvent) {
+                dismissVolumeHud()
+                cancelHoldRepeatLoop(isUp = false)
+                cancelHoldRepeatLoop(isUp = true)
+                pendingVolDownJob?.cancel()
+                pendingVolDownJob = null
+                pendingVolUpJob?.cancel()
+                pendingVolUpJob = null
+            }
             if (!pkg.isNullOrBlank() && pkg != packageName) {
                 if (className != "android.widget.Toast") {
                     if (pkg != currentForegroundPackage) {
@@ -1249,8 +1260,30 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) lastDownKeyEventTimestamp = now
         if (keyCode == KeyEvent.KEYCODE_POWER) lastPowerKeyEventTimestamp = now
 
-        val isReleaseAction = event.action == KeyEvent.ACTION_UP || (event.flags and KeyEvent.FLAG_CANCELED) != 0
-        if (isReleaseAction) {
+        val isCanceled = (event.flags and (KeyEvent.FLAG_CANCELED or KeyEvent.FLAG_CANCELED_LONG_PRESS)) != 0
+        if (isCanceled) {
+            markButtonReleasedAndHideEdgePop(keyCode, currentSettings)
+            dismissVolumeHud()
+            cancelHoldRepeatLoop(isUp = true)
+            cancelHoldRepeatLoop(isUp = false)
+            volumeHoldThinJob?.cancel()
+            volumeHoldThinJob = null
+            pendingVolUpJob?.cancel()
+            pendingVolUpJob = null
+            pendingVolDownJob?.cancel()
+            pendingVolDownJob = null
+            volUpIsDown = false
+            volDownIsDown = false
+            keyHeldDown = false
+            consumedUpKeyDown = false
+            consumedDownKeyDown = false
+            isHoldingVolUpAtMax.value = false
+            isHoldingVolDownAtMin.value = false
+            clearAllEdgePops()
+            return super.onKeyEvent(event)
+        }
+
+        if (event.action == KeyEvent.ACTION_UP) {
             markButtonReleasedAndHideEdgePop(keyCode, currentSettings)
         }
 
@@ -1494,6 +1527,8 @@ class NudgeAccessibilityService : AccessibilityService() {
         val chordBufferMs = if (isChordAssigned) currentSettings.simultaneousPressTimeoutMs else 0L
         val doubleTapBufferMs = if (isDoubleTapAssigned) configuredDoubleTapTimeoutMs else 0L
         val waitWindowMs = maxOf(chordBufferMs, doubleTapBufferMs)
+        val screenshotChordGuardMs = ViewConfiguration.getLongPressTimeout().toLong().coerceIn(400L, 500L)
+        val effectiveWaitWindowMs = if (isUp || hudIsActive) waitWindowMs else maxOf(waitWindowMs, screenshotChordGuardMs)
 
         when (event.action) {
             KeyEvent.ACTION_DOWN -> {
@@ -1513,17 +1548,19 @@ class NudgeAccessibilityService : AccessibilityService() {
                     volDownIsDown = true
                     lastVolDownPressTimeMs = now
                     wasAtMinOnDown = volumeFraction.value <= 0.001f
-                    if (wasAtMinOnDown) {
+                    if (wasAtMinOnDown && (hudIsActive || effectiveWaitWindowMs == 0L)) {
                         triggerBoundaryPulse(isMax = false, pressDurationMs = 120L)
                     }
                 }
 
                 volumeHoldThinJob?.cancel()
-                volumeHoldThinJob = serviceScope.launch {
-                    delay(400L)
-                    val latest = effectiveSettingsState.value
-                    if ((volUpIsDown || volDownIsDown || keyHeldDown) && latest.enableThinVolumeHud) {
-                        isHudThin.value = true
+                if (hudIsActive || isUp) {
+                    volumeHoldThinJob = serviceScope.launch {
+                        delay(400L)
+                        val latest = effectiveSettingsState.value
+                        if ((volUpIsDown || volDownIsDown || keyHeldDown) && latest.enableThinVolumeHud) {
+                            isHudThin.value = true
+                        }
                     }
                 }
 
@@ -1552,7 +1589,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                     return performImmediateVolumeDown(isUp, currentSettings, isLandscape, popAllowed, hudAllowed, downTimeMs = now)
                 }
 
-                if (waitWindowMs > 0L) {
+                if (effectiveWaitWindowMs > 0L) {
                     val pendingJob = if (isUp) pendingVolUpJob else pendingVolDownJob
                     if (isDoubleTapAssigned && pendingJob != null && pendingJob.isActive) {
                         pendingJob.cancel()
@@ -1575,7 +1612,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             ActiveVolumeStream.MEDIA -> AudioManager.STREAM_MUSIC
         }
                     val job = serviceScope.launch {
-                        delay(waitWindowMs)
+                        delay(effectiveWaitWindowMs)
                         val wasReleased = if (isUp) pendingVolUpReleased else pendingVolDownReleased
                         if (wasReleased) {
                             audioScope?.launch {
@@ -1621,8 +1658,23 @@ class NudgeAccessibilityService : AccessibilityService() {
                 volumeHoldThinJob?.cancel()
                 volumeHoldThinJob = null
                 if (isUp) volUpIsDown = false else volDownIsDown = false
+                keyHeldDown = false
 
-                val isCanceled = (event.flags and KeyEvent.FLAG_CANCELED) != 0
+                val isCanceled = (event.flags and (KeyEvent.FLAG_CANCELED or KeyEvent.FLAG_CANCELED_LONG_PRESS)) != 0
+                if (isCanceled) {
+                    dismissVolumeHud()
+                    pendingVolUpJob?.cancel(); pendingVolUpJob = null
+                    pendingVolDownJob?.cancel(); pendingVolDownJob = null
+                    cancelHoldRepeatLoop(isUp = true)
+                    cancelHoldRepeatLoop(isUp = false)
+                    consumedUpKeyDown = false
+                    consumedDownKeyDown = false
+                    isHoldingVolUpAtMax.value = false
+                    isHoldingVolDownAtMin.value = false
+                    clearAllEdgePops()
+                    return super.onKeyEvent(event)
+                }
+
                 val downTime = if (isUp) lastVolUpPressTimeMs else lastVolDownPressTimeMs
                 val pressDuration = now - downTime
 
@@ -1665,10 +1717,42 @@ class NudgeAccessibilityService : AccessibilityService() {
 
                 if (isUp) lastVolUpReleaseTimeMs = now else lastVolDownReleaseTimeMs = now
 
-                if (waitWindowMs > 0L) {
-                    val pendingJob = if (isUp) pendingVolUpJob else pendingVolDownJob
-                    if (pendingJob != null && pendingJob.isActive) {
+                val pendingJob = if (isUp) pendingVolUpJob else pendingVolDownJob
+                if (pendingJob != null && pendingJob.isActive) {
+                    if (isDoubleTapAssigned) {
                         if (isUp) pendingVolUpReleased = true else pendingVolDownReleased = true
+                        return true
+                    } else {
+                        pendingJob.cancel()
+                        if (isUp) pendingVolUpJob = null else pendingVolDownJob = null
+                        val activeStreamEnum = resolveActiveVolumeStream()
+                        val activeStream = when (activeStreamEnum) {
+                            ActiveVolumeStream.CALL -> AudioManager.STREAM_VOICE_CALL
+                            ActiveVolumeStream.RING -> AudioManager.STREAM_RING
+                            ActiveVolumeStream.MEDIA -> AudioManager.STREAM_MUSIC
+                        }
+                        audioScope?.launch {
+                            applyAudioVolumeStep(
+                                streamType = activeStream,
+                                direction = if (isUp) 1 else -1,
+                                settings = currentSettings,
+                                showSystemUi = EdgeOrientationMapper.shouldShowSystemVolumePanel(isLandscape, currentSettings),
+                                initialPress = true,
+                                stepMultiplier = 1
+                            )
+                        }
+                        if (hudAllowed) {
+                            handleHudTrigger(settings = currentSettings, initialPress = true)
+                        }
+                        if (popAllowed) {
+                            serviceScope.launch(Dispatchers.Main) {
+                                schedulePopRetract(isUp = isUp, settings = currentSettings)
+                            }
+                        }
+                        keyHeldDown = false
+                        holdSequence.incrementAndGet()
+                        cancelHoldRepeatLoop(isUp = isUp)
+                        if (isUp) consumedUpKeyDown = false else consumedDownKeyDown = false
                         return true
                     }
                 }
@@ -2860,6 +2944,7 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     private fun dismissVolumeHud() {
         hudHideJob?.cancel()
+        boundaryPulseJob?.cancel()
         hudActive.value = false
         isHudThin.value = false
         volumePressCount = 0
