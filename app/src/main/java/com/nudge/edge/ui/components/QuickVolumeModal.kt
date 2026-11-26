@@ -1154,7 +1154,7 @@ fun QuickVolumeModal(
                                 pillTransparency = pillTransparency,
                                 volumeSliderBlur = volumeSliderBlur,
                                 pillBlurDp = pillBlurDp,
-                                isModalVisible = isVisible,
+                                isModalVisible = isVisible || animFraction > 0.005f,
                                 onIconTap = channel.onIconTap,
                                 onValueChange = channel.onValueChange,
                                 onScrubStateChanged = { scrubbing ->
@@ -1287,7 +1287,7 @@ fun QuickVolumeModal(
                                 pillTransparency = pillTransparency,
                                 volumeSliderBlur = volumeSliderBlur,
                                 pillBlurDp = pillBlurDp,
-                                isModalVisible = isVisible,
+                                isModalVisible = isVisible || animFraction > 0.005f,
                                 onIconTap = channel.onIconTap,
                                 onValueChange = channel.onValueChange,
                                 onScrubStateChanged = { scrubbing ->

@@ -850,7 +850,7 @@ fun VolumeSliderHud(
             .width(containerWidthDp.dp)
             .height(containerHeightDp.dp)
     ) {
-        if (isSamsungActive && blurRadiusPx > 0 && isVisible && effectiveSlideProgress > 0.01f) {
+        if (isSamsungActive && blurRadiusPx > 0 && effectiveSlideProgress > 0.01f) {
             val pillWDp = animatedWidthDp.dp
             val maxStretchExtraDp = if (stretchScaleMax > 1.001f) drawnPillSpanDp * (stretchScaleMax - 1f) else 0f
             val minStretchExtraDp = if (stretchScaleMin > 1.001f) drawnPillSpanDp * (stretchScaleMin - 1f) else 0f
@@ -903,7 +903,7 @@ fun VolumeSliderHud(
                         view = view,
                         blurRadiusPx = blurRadiusPx,
                         cornerRadiusPx = cornerRadiusPx,
-                        isHudVisible = isVisible && effectiveSlideProgress > 0.01f,
+                        isHudVisible = effectiveSlideProgress > 0.01f,
                         widthPx = if (isVerticalEdge) pillWPx else pillSpanPx,
                         heightPx = if (isVerticalEdge) pillSpanPx else pillWPx
                     )

@@ -4187,10 +4187,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                     modalCollapseGoneJob = serviceScope.launch {
                         delay(260L)
                         if (!modalActive.value && effectivePreviewTargetState.value != PreviewTarget.AUDIO_MIXER && effectivePreviewTargetState.value != PreviewTarget.MIXER) {
-                            if (hudDialog != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            runCatching { hudDialog?.window?.setBackgroundBlurRadius(0) }
-        }
-        modalView?.visibility = View.GONE
+                            modalView?.visibility = View.GONE
                         }
                     }
                 }
