@@ -11,10 +11,10 @@
 
 <p align="center">
   <a href="https://github.com/DarkAspect1/Nudge-Edge/releases/latest">
-    <img src="https://img.shields.io/github/downloads/DarkAspect1/Nudge-Edge/total?style=flat&logo=github&logoColor=white&label=Downloads&labelColor=1f1f2e&color=6c5ce7" alt="Total downloads">
+    <img src="https://img.shields.io/github/v/release/DarkAspect1/Nudge-Edge?style=flat&logo=github&logoColor=white&label=Release&labelColor=1f1f2e&color=00b894" alt="Latest release">
   </a>
   <a href="https://github.com/DarkAspect1/Nudge-Edge/releases/latest">
-    <img src="https://img.shields.io/github/v/release/DarkAspect1/Nudge-Edge?style=flat&logo=github&logoColor=white&label=Release&labelColor=1f1f2e&color=00b894" alt="Latest release">
+    <img src="https://img.shields.io/github/downloads/DarkAspect1/Nudge-Edge/total?style=flat&logo=github&logoColor=white&label=Downloads&labelColor=1f1f2e&color=6c5ce7" alt="Total downloads">
   </a>
   <a href="https://github.com/DarkAspect1/Nudge-Edge/stargazers">
     <img src="https://img.shields.io/github/stars/DarkAspect1/Nudge-Edge?style=flat&logo=github&logoColor=white&label=Stars&labelColor=1f1f2e&color=fdcb6e" alt="Stars">
