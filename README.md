@@ -29,7 +29,44 @@
   </a>
 </p>
 
-![Nudge](assets/Nudge.png)
+<table align="center">
+  <tr>
+    <td align="center" width="25%">
+      <img src="assets/nudge_volume.png" alt="Volume slider"><br>
+      <sub><b>Volume slider</b></sub>
+    </td>
+    <td align="center" width="25%">
+      <img src="assets/nudge_edge_pops.png" alt="Rounded edge pops"><br>
+      <sub><b>Edge pops (rounded)</b></sub>
+    </td>
+    <td align="center" width="25%">
+      <img src="assets/nudge_edge_pops_flat.png" alt="Flat edge pops"><br>
+      <sub><b>Edge pops (flat)</b></sub>
+    </td>
+    <td align="center" width="25%">
+      <img src="assets/nudge_modes.png" alt="Modes panel"><br>
+      <sub><b>Modes panel</b></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="25%">
+      <img src="assets/nudge_silent.png" alt="Silent panel"><br>
+      <sub><b>Sound / Silent panel</b></sub>
+    </td>
+    <td align="center" width="25%">
+      <img src="assets/nudge_dnd.png" alt="DND panel"><br>
+      <sub><b>DND panel</b></sub>
+    </td>
+    <td align="center" width="25%">
+      <img src="assets/nudge_apps.png" alt="Open apps menu"><br>
+      <sub><b>Open apps menu</b></sub>
+    </td>
+    <td align="center" width="25%">
+      <img src="assets/nudge_camera.png" alt="Edge handle actions"><br>
+      <sub><b>Edge handle actions</b></sub>
+    </td>
+  </tr>
+</table>
 
 ## Features
 
