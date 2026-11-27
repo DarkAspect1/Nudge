@@ -1325,7 +1325,11 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         val isCanceled = (event.flags and (KeyEvent.FLAG_CANCELED or KeyEvent.FLAG_CANCELED_LONG_PRESS)) != 0
         if (isCanceled) {
+<<<<<<< HEAD
             markButtonReleasedAndHideEdgePop(keyCode, event.scanCode, currentSettings)
+=======
+            markButtonReleasedAndHideEdgePop(keyCode, currentSettings)
+>>>>>>> 3327e2aeb19543d5bbc4f3f5ec5bfa115ae0a5fe
             dismissVolumeHud()
             cancelHoldRepeatLoop(isUp = true)
             cancelHoldRepeatLoop(isUp = false)
@@ -1340,7 +1344,10 @@ class NudgeAccessibilityService : AccessibilityService() {
             keyHeldDown = false
             consumedUpKeyDown = false
             consumedDownKeyDown = false
+<<<<<<< HEAD
             chordFired = false
+=======
+>>>>>>> 3327e2aeb19543d5bbc4f3f5ec5bfa115ae0a5fe
             isHoldingVolUpAtMax.value = false
             isHoldingVolDownAtMin.value = false
             clearAllEdgePops()
@@ -1348,7 +1355,11 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         if (event.action == KeyEvent.ACTION_UP) {
+<<<<<<< HEAD
             markButtonReleasedAndHideEdgePop(keyCode, event.scanCode, currentSettings)
+=======
+            markButtonReleasedAndHideEdgePop(keyCode, currentSettings)
+>>>>>>> 3327e2aeb19543d5bbc4f3f5ec5bfa115ae0a5fe
         }
 
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
@@ -1670,9 +1681,15 @@ class NudgeAccessibilityService : AccessibilityService() {
                 volumeHoldThinJob?.cancel()
                 if (hudIsActive || isUp) {
                     volumeHoldThinJob = serviceScope.launch {
+<<<<<<< HEAD
                         delay(350L)
                         val latest = effectiveSettingsState.value
                         if ((volUpIsDown || volDownIsDown) && latest.enableThinVolumeHud) {
+=======
+                        delay(400L)
+                        val latest = effectiveSettingsState.value
+                        if ((volUpIsDown || volDownIsDown || keyHeldDown) && latest.enableThinVolumeHud) {
+>>>>>>> 3327e2aeb19543d5bbc4f3f5ec5bfa115ae0a5fe
                             isHudThin.value = true
                         }
                     }

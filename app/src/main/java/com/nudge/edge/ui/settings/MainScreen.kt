@@ -411,7 +411,7 @@ private fun LocalFallbackEdgePreviewLayer(
     val showPower = popAllowed &&
         settings.enablePowerButtonPop &&
         (previewTarget == PreviewTarget.POP_POWER || previewTarget == PreviewTarget.EDGE_POP_POWER)
-    val showHud = hudAllowed && (previewTarget == PreviewTarget.HUD || previewTarget == PreviewTarget.THIN_HUD)
+    val showHud = hudAllowed && previewTarget == PreviewTarget.HUD
 
     val popAlignment = edgeBoxAlignment(popScreenEdge)
     val hudAlignment = edgeBoxAlignment(hudScreenEdge)
@@ -473,7 +473,6 @@ private fun LocalFallbackEdgePreviewLayer(
                     volumeSliderFluidityPercent = settings.volumeSliderFluidityPercent,
                     pillTransparency = settings.volumeSliderPillTransparency,
                     pillBlurDp = settings.volumeSliderPillBlurDp,
-                    lightMode = settings.lightMode,
                     onVolumeScrub = onScrubFraction,
                     onScrubStateChanged = onScrubStateChanged,
                     onOpenMenu = onOpenMenu,
@@ -538,9 +537,6 @@ private fun LocalFallbackEdgePreviewLayer(
                     fluidityPercent = settings.dndPanelFluidityPercent,
                     modeType = settings.dndModeType,
                     isSilentOrDndActive = true,
-                    includeSound = settings.dndIncludeSound,
-                    includeVibrate = settings.dndIncludeVibrate,
-                    includeSilent = settings.dndIncludeSilent,
                     isVisible = true,
                     showLabel = settings.showDndLabel
                 )
