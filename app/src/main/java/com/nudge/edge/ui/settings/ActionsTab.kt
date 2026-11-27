@@ -113,6 +113,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -676,14 +677,98 @@ private fun DndPanelCard(
                                     shape = CircleShape,
                                     color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh
                                 ) {
-                                    Text(
-                                        text = mode.displayName,
-                                        modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 10.dp, horizontal = 4.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = mode.displayName,
+                                            style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Clip
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        AnimatedVisibility(
+                            visible = settings.dndModeType == DndModeType.SILENT_RING,
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut() + shrinkVertically()
+                        ) {
+                            val activeCount = (if (settings.dndIncludeSound) 1 else 0) +
+                                (if (settings.dndIncludeVibrate) 1 else 0) +
+                                (if (settings.dndIncludeSilent) 1 else 0)
+
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text(
+                                            text = "Sound",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Switch(
+                                            checked = settings.dndIncludeSound,
+                                            onCheckedChange = { checked ->
+                                                if (checked || activeCount > 2) repository.setDndIncludeSound(checked)
+                                            },
+                                            modifier = Modifier.scale(0.75f)
+                                        )
+                                    }
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text(
+                                            text = "Vibrate",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Switch(
+                                            checked = settings.dndIncludeVibrate,
+                                            onCheckedChange = { checked ->
+                                                if (checked || activeCount > 2) repository.setDndIncludeVibrate(checked)
+                                            },
+                                            modifier = Modifier.scale(0.75f)
+                                        )
+                                    }
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text(
+                                            text = "Silent",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Switch(
+                                            checked = settings.dndIncludeSilent,
+                                            onCheckedChange = { checked ->
+                                                if (checked || activeCount > 2) repository.setDndIncludeSilent(checked)
+                                            },
+                                            modifier = Modifier.scale(0.75f)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1588,7 +1673,7 @@ private fun HowToUseActionsCard() {
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "• Modes & Routines: Emits a silent notification with the mode keyword that your routine can detect as an 'If' condition.\n• Tasker, MacroDroid, Automate: Receives broadcast 'com.nudge.edge.MODE_CHANGED' with extras 'mode', 'mode_id', and 'mode_name'.\n• Custom profiles: Switch presets for Work, Sleep, Gym, Gaming, or Driving.",
+                            text = "• Modes & Routines: Emits a silent notification with the mode keyword that your routine can detect as an 'If' condition.\n• Tasker, MacroDroid, Automate: Receives broadcast 'com.nudge.edge.MODE_CHANGED' with extras 'mode', 'mode_id', and 'mode_name'.",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -1601,7 +1686,7 @@ private fun HowToUseActionsCard() {
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "1. Choose your preferred Hardware Trigger Button below.\n2. Add or reorder modes in the Modes Manager.\n3. In Modes & Routines or Tasker, create a routine that listens for the notification keyword (tap any keyword below the modes in modes manager to copy it).\n4. Broadcast Step Example: In Tasker/MacroDroid, add an Intent Received event for 'com.nudge.edge.MODE_CHANGED', or test via shell command: am broadcast -a com.nudge.edge.MODE_CHANGED --es mode \"sleep\".",
+                            text = "1. Choose your preferred Hardware Trigger Button below.\n2. Add or reorder modes in the Modes Manager.\n3. In Modes & Routines or Tasker, create a routine that listens for the notification keyword (tap any keyword below the modes in modes manager to copy it).",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -1629,14 +1714,33 @@ private fun CustomButtonScannerDialog(
     var detectedTrigger by remember { mutableStateOf<HardwareKeyTrigger?>(null) }
     val shizukuState by ShizukuManager.status.collectAsState()
 
-    DisposableEffect(Unit) {
+    DisposableEffect(shizukuState) {
         NudgeAccessibilityService.isScanningCustomButton = true
         NudgeAccessibilityService.onCustomButtonScanned = { trigger ->
             detectedTrigger = trigger
         }
+        val shizukuListener: (String, Int, Boolean, String?) -> Unit = { dev, scan, isDown, name ->
+            if (isDown && detectedTrigger == null) {
+                val label = name?.removePrefix("KEY_") ?: if (scan != 0) "SCAN_$scan" else "CUSTOM_KEY"
+                val trigger = HardwareKeyTrigger(
+                    source = TriggerSource.SHIZUKU_GETEVENT,
+                    androidKeyCode = null,
+                    scanCode = scan.takeIf { it != 0 },
+                    linuxKeyName = label,
+                    deviceName = dev
+                )
+                detectedTrigger = trigger
+            }
+        }
+        if (shizukuState == ShizukuStatus.CONNECTED_AND_ACTIVE) {
+            ShizukuManager.onCustomHardwareKeyEvent = shizukuListener
+        }
         onDispose {
             NudgeAccessibilityService.isScanningCustomButton = false
             NudgeAccessibilityService.onCustomButtonScanned = null
+            if (ShizukuManager.onCustomHardwareKeyEvent == shizukuListener) {
+                ShizukuManager.onCustomHardwareKeyEvent = null
+            }
         }
     }
 

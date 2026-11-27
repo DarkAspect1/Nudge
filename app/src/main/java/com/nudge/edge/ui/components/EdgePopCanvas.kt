@@ -355,12 +355,15 @@ fun EdgePopStripOverlay(
     downPulseTrigger: Int = 0,
     powerPulseTrigger: Int = 0,
     resetEpoch: Int = 0,
+    snapHideUp: Boolean = false,
+    snapHideDown: Boolean = false,
+    snapHidePower: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
-    val upProgress = remember { Animatable(if (upExpanded) 1f else 0f) }
-    val downProgress = remember { Animatable(if (downExpanded) 1f else 0f) }
-    val powerProgress = remember { Animatable(if (powerExpanded) 1f else 0f) }
+    val upProgress = remember { Animatable(if (upExpanded && !snapHideUp) 1f else 0f) }
+    val downProgress = remember { Animatable(if (downExpanded && !snapHideDown) 1f else 0f) }
+    val powerProgress = remember { Animatable(if (powerExpanded && !snapHidePower) 1f else 0f) }
     val scratchPath = remember { Path() }
 
     LaunchedEffect(resetEpoch) {
@@ -371,8 +374,10 @@ fun EdgePopStripOverlay(
         }
     }
 
-    LaunchedEffect(upExpanded, resetEpoch) {
-        if (upExpanded) {
+    LaunchedEffect(upExpanded, snapHideUp, resetEpoch) {
+        if (snapHideUp) {
+            upProgress.snapTo(0f)
+        } else if (upExpanded) {
             upProgress.animateTo(
                 targetValue = 1f,
                 animationSpec = spring(dampingRatio = 0.72f, stiffness = 950f)
@@ -385,8 +390,10 @@ fun EdgePopStripOverlay(
         }
     }
 
-    LaunchedEffect(downExpanded, resetEpoch) {
-        if (downExpanded) {
+    LaunchedEffect(downExpanded, snapHideDown, resetEpoch) {
+        if (snapHideDown) {
+            downProgress.snapTo(0f)
+        } else if (downExpanded) {
             downProgress.animateTo(
                 targetValue = 1f,
                 animationSpec = spring(dampingRatio = 0.72f, stiffness = 950f)
@@ -399,8 +406,10 @@ fun EdgePopStripOverlay(
         }
     }
 
-    LaunchedEffect(powerExpanded, resetEpoch) {
-        if (powerExpanded) {
+    LaunchedEffect(powerExpanded, snapHidePower, resetEpoch) {
+        if (snapHidePower) {
+            powerProgress.snapTo(0f)
+        } else if (powerExpanded) {
             powerProgress.animateTo(
                 targetValue = 1f,
                 animationSpec = spring(dampingRatio = 0.72f, stiffness = 950f)

@@ -14,6 +14,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
@@ -438,7 +439,7 @@ private fun DrawScope.drawDynamicSliderIcon(
         return
     }
     val isBt = isBluetoothConnected
-    val isCall = (inCall && !isMediaPlayingNow) || activeStreamType == AudioManager.STREAM_VOICE_CALL
+    val isCall = inCall || activeStreamType == AudioManager.STREAM_VOICE_CALL
     val tintColor = if (isBt) Color(0xFFFF453A) else if (isWhiteSection) whiteColor else darkColor
 
     if (isCall) {
@@ -482,6 +483,7 @@ fun VolumeSliderHud(
     isMediaPlayingNow: Boolean = false,
     volumeSliderFluidityPercent: Int = 75,
     maxVolumeLimit: Int = 100,
+    callMinStep: Int = 1,
     customAppIcon: Drawable? = null,
     onVolumeScrub: (Float) -> Unit,
     onScrubStateChanged: (Boolean) -> Unit,
@@ -493,6 +495,7 @@ fun VolumeSliderHud(
     pillTransparency: Int = 0,
     volumeSliderBlur: Float = 0f,
     pillBlurDp: Float = 0f,
+    lightMode: Boolean = false,
     isMuteAllSounds: Boolean = false,
     isThin: Boolean = false,
     thinHudEdgeInsetDp: Float = 6f,
@@ -516,9 +519,8 @@ fun VolumeSliderHud(
 
     val callPainter = rememberVectorPainter(Icons.Rounded.Call)
 
-    val isCall = activeStreamType == AudioManager.STREAM_VOICE_CALL
-    val maxCallSteps = (maxVolumeLimit / 10).coerceAtLeast(1)
-    val minFraction = if (isCall) (1f / maxCallSteps.toFloat()).coerceIn(0f, 1f) else 0f
+    val isCall = inCall || activeStreamType == AudioManager.STREAM_VOICE_CALL
+    val minFraction = if (isCall && maxVolumeLimit > 0) (callMinStep.toFloat() / maxVolumeLimit.toFloat()).coerceIn(0f, 1f) else 0f
 
     var isScrubbing by remember { mutableStateOf(false) }
     var scrubFraction by remember { mutableFloatStateOf(volumeFraction.coerceIn(minFraction, 1f)) }
@@ -531,7 +533,7 @@ fun VolumeSliderHud(
         }
     }
 
-    var lastActiveIsThin by remember { mutableStateOf(isThin) }
+    var lastActiveIsThin by remember(isThin) { mutableStateOf(isThin) }
     if (isVisible) {
         lastActiveIsThin = isThin
     }
@@ -568,7 +570,7 @@ fun VolumeSliderHud(
     )
 
     val isOverMax = (isHoldingVolUpAtMax && volumeFraction >= 0.999f) || isOverMaxScrub
-    val isOverMin = (isHoldingVolDownAtMin && volumeFraction <= 0.001f) || isOverMinScrub
+    val isOverMin = (isHoldingVolDownAtMin && (volumeFraction <= 0.001f || (isCall && volumeFraction <= (minFraction + 0.02f)))) || isOverMinScrub
 
     val stretchScaleMax by animateFloatAsState(
         targetValue = if (isOverMax) 1.08f else 1.0f,
@@ -666,10 +668,10 @@ fun VolumeSliderHud(
     val effectivePillWidthDp = if (effectiveIsThin) animatedWidthDp else hudWidthDp
     val effectiveInsetDp = if (effectiveIsThin) animatedInsetDp else maxInsetDp
     val totalThicknessDp = effectivePillWidthDp + (HUD_CUTOUT_BEZEL_PAD_DP + HUD_CUTOUT_INNER_PAD_DP) * (1f - floatProgress) + effectiveInsetDp
-    val containerWidthDp = if (isVerticalEdge) totalThicknessDp else outerSpanDp
-    val containerHeightDp = if (isVerticalEdge) outerSpanDp else totalThicknessDp
+    val containerWidthDp = if (isVerticalEdge) totalThicknessDp else (outerSpanDp + 60f)
+    val containerHeightDp = if (isVerticalEdge) (outerSpanDp + 60f) else totalThicknessDp
 
-    val pillStartPx = with(density) { HUD_CUTOUT_PILL_START_OFFSET_DP.dp.toPx() }
+    val pillStartPx = with(density) { (HUD_CUTOUT_PILL_START_OFFSET_DP + 30f).dp.toPx() }
     val pillLenPx = with(density) { drawnPillSpanDp.dp.toPx() }
     val pillEndPx = pillStartPx + pillLenPx
     val speakerTapZonePx = with(density) { (hudWidthDp * 1.0f).coerceIn(32f, 48f).dp.toPx() }
@@ -717,17 +719,17 @@ fun VolumeSliderHud(
                 slideProgress.animateTo(
                     targetValue = 1f,
                     animationSpec = spring(
-                        dampingRatio = 0.72f,
-                        stiffness = 320f
+                        dampingRatio = 0.76f,
+                        stiffness = 450f
                     )
                 )
             }
         } else {
             slideProgress.animateTo(
                 targetValue = 0f,
-                animationSpec = spring(
-                    dampingRatio = 0.85f,
-                    stiffness = 380f
+                animationSpec = tween(
+                    durationMillis = 160,
+                    easing = FastOutLinearInEasing
                 )
             )
         }
@@ -737,7 +739,9 @@ fun VolumeSliderHud(
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
             val wasThinOnDown = currentIsThin
-            currentOnUserInteraction()
+            if (!wasThinOnDown) {
+                currentOnUserInteraction()
+            }
             if (currentIsMuteAllSounds || !currentInteractive) return@awaitEachGesture
             val downX = down.position.x
             val downY = down.position.y
@@ -761,6 +765,77 @@ fun VolumeSliderHud(
                 }
             }
 
+            val pillTouchTolerance = with(density) { 16.dp.toPx() }
+            val containerWPx = with(density) { containerWidthDp.dp.toPx() }
+            val containerHPx = with(density) { containerHeightDp.dp.toPx() }
+            val effInsetDp = if (wasThinOnDown) thinHudEdgeInsetDp else effectiveInsetDp
+            val bezelPadPx = with(density) { (HUD_CUTOUT_BEZEL_PAD_DP * (1f - floatProgress) + effInsetDp).dp.toPx() }
+            val pillWPx = with(density) { (if (wasThinOnDown) 7f else effectivePillWidthDp).dp.toPx() }
+
+            val pillMinX = when (edge) {
+                ScreenEdge.RIGHT -> containerWPx - bezelPadPx - pillWPx
+                ScreenEdge.LEFT -> bezelPadPx
+                else -> 0f
+            }
+            val pillMaxX = when (edge) {
+                ScreenEdge.RIGHT -> containerWPx - bezelPadPx
+                ScreenEdge.LEFT -> bezelPadPx + pillWPx
+                else -> 0f
+            }
+            val pillMinY = when (edge) {
+                ScreenEdge.TOP -> bezelPadPx
+                ScreenEdge.BOTTOM -> containerHPx - bezelPadPx - pillWPx
+                else -> 0f
+            }
+            val pillMaxY = when (edge) {
+                ScreenEdge.TOP -> bezelPadPx + pillWPx
+                ScreenEdge.BOTTOM -> containerHPx - bezelPadPx
+                else -> 0f
+            }
+
+            val isInsideBreadthPill = when (edge) {
+                ScreenEdge.RIGHT -> downX >= (pillMinX - pillTouchTolerance) && downX <= (pillMaxX + pillTouchTolerance)
+                ScreenEdge.LEFT -> downX >= (pillMinX - pillTouchTolerance) && downX <= (pillMaxX + pillTouchTolerance)
+                ScreenEdge.TOP -> downY >= (pillMinY - pillTouchTolerance) && downY <= (pillMaxY + pillTouchTolerance)
+                ScreenEdge.BOTTOM -> downY >= (pillMinY - pillTouchTolerance) && downY <= (pillMaxY + pillTouchTolerance)
+            }
+            val isInsideLengthPill = if (vertical) {
+                downY >= (pStart - pillTouchTolerance) && downY <= (pEnd + pillTouchTolerance)
+            } else {
+                downX >= (pStart - pillTouchTolerance) && downX <= (pEnd + pillTouchTolerance)
+            }
+            val isInsidePill = isInsideBreadthPill && isInsideLengthPill
+
+            val hudReachBreadthPx = with(density) {
+                if (wasThinOnDown) {
+                    (effInsetDp + 7f + 24f).dp.toPx()
+                } else {
+                    (computeHudCutoutThicknessDp(hudWidthDp, effectiveInsetDp) + 12f).dp.toPx()
+                }
+            }
+            val isInsideBreadthHud = when (edge) {
+                ScreenEdge.RIGHT -> downX >= (containerWPx - hudReachBreadthPx)
+                ScreenEdge.LEFT -> downX <= hudReachBreadthPx
+                ScreenEdge.TOP -> downY <= hudReachBreadthPx
+                ScreenEdge.BOTTOM -> downY >= (containerHPx - hudReachBreadthPx)
+            }
+            val extraPadPx = with(density) { 30.dp.toPx() }
+            val outerSpanPx = with(density) { outerSpanDp.dp.toPx() }
+            val isInsideLengthHud = if (wasThinOnDown) {
+                if (vertical) {
+                    downY >= (pStart - 16.dp.toPx()) && downY <= (pEnd + 16.dp.toPx())
+                } else {
+                    downX >= (pStart - 16.dp.toPx()) && downX <= (pEnd + 16.dp.toPx())
+                }
+            } else {
+                if (vertical) {
+                    downY >= (extraPadPx - 8.dp.toPx()) && downY <= (extraPadPx + outerSpanPx + 8.dp.toPx())
+                } else {
+                    downX >= (extraPadPx - 8.dp.toPx()) && downX <= (extraPadPx + outerSpanPx + 8.dp.toPx())
+                }
+            }
+            val isInsideHudBounds = isInsideBreadthHud && isInsideLengthHud
+
             var movedAlongTrack = false
             var isLongPressHandled = false
             var longPressJob: Job? = null
@@ -776,7 +851,7 @@ fun VolumeSliderHud(
                 }
             }
 
-            if (!inSpeakerZone && !currentIsMuteAllSounds) {
+            if (!wasThinOnDown && isInsidePill && !inSpeakerZone && !currentIsMuteAllSounds) {
                 isScrubbing = true
                 currentOnScrubStateChanged(true)
                 val initial = calculateFraction(if (vertical) downY else downX)
@@ -795,29 +870,47 @@ fun VolumeSliderHud(
 
                     if (!change.pressed) {
                         longPressJob?.cancel()
-                        if (inSpeakerZone && !movedAlongTrack && !isLongPressHandled) {
-                            if (!wasThinOnDown && !currentIsThin && currentCustomAppIcon == null) {
-                                currentOnOpenMenu()
+                        if (wasThinOnDown) {
+                            if (!movedAlongTrack) {
+                                if (isInsideHudBounds) {
+                                    currentOnUserInteraction()
+                                } else {
+                                    currentOnDismiss()
+                                }
+                            }
+                        } else {
+                            if (inSpeakerZone && !movedAlongTrack && !isLongPressHandled) {
+                                if (!currentIsThin && currentCustomAppIcon == null) {
+                                    currentOnOpenMenu()
+                                }
+                            }
+                            if (!movedAlongTrack) {
+                                if (isInsideHudBounds) {
+                                    currentOnUserInteraction()
+                                } else {
+                                    currentOnDismiss()
+                                }
                             }
                         }
-                        val isOutsideTrack = if (vertical) {
-                            downY < pStart || downY > pEnd
-                        } else {
-                            downX < pStart || downX > pEnd
-                        }
-                        if (isOutsideTrack && !movedAlongTrack) {
-                            currentOnDismiss()
+                        if (isScrubbing) {
+                            isScrubbing = false
+                            currentOnScrubStateChanged(false)
                         }
                         change.consume()
                         break
                     }
 
                     if (trackDelta > tapSlopPx) {
-                        movedAlongTrack = true
-                        longPressJob?.cancel()
-                        if (!isScrubbing) {
-                            isScrubbing = true
-                            currentOnScrubStateChanged(true)
+                        if (!movedAlongTrack) {
+                            movedAlongTrack = true
+                            longPressJob?.cancel()
+                            if (wasThinOnDown && isInsidePill && !currentIsMuteAllSounds) {
+                                isScrubbing = true
+                                currentOnScrubStateChanged(true)
+                            } else if (!wasThinOnDown && !isScrubbing && !inSpeakerZone && !currentIsMuteAllSounds) {
+                                isScrubbing = true
+                                currentOnScrubStateChanged(true)
+                            }
                         }
                     }
 
@@ -850,7 +943,7 @@ fun VolumeSliderHud(
             .width(containerWidthDp.dp)
             .height(containerHeightDp.dp)
     ) {
-        if (isSamsungActive && blurRadiusPx > 0 && isVisible && effectiveSlideProgress > 0.01f) {
+        if (isSamsungActive && blurRadiusPx > 0 && effectiveSlideProgress > 0.01f) {
             val pillWDp = animatedWidthDp.dp
             val maxStretchExtraDp = if (stretchScaleMax > 1.001f) drawnPillSpanDp * (stretchScaleMax - 1f) else 0f
             val minStretchExtraDp = if (stretchScaleMin > 1.001f) drawnPillSpanDp * (stretchScaleMin - 1f) else 0f
@@ -903,7 +996,7 @@ fun VolumeSliderHud(
                         view = view,
                         blurRadiusPx = blurRadiusPx,
                         cornerRadiusPx = cornerRadiusPx,
-                        isHudVisible = isVisible && effectiveSlideProgress > 0.01f,
+                        isHudVisible = effectiveSlideProgress > 0.01f,
                         widthPx = if (isVerticalEdge) pillWPx else pillSpanPx,
                         heightPx = if (isVerticalEdge) pillSpanPx else pillWPx
                     )
@@ -939,11 +1032,13 @@ fun VolumeSliderHud(
             )
         }
 
+        val notchAlpha = (1f - floatProgress).coerceIn(0f, 1f)
+
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    compositingStrategy = CompositingStrategy.Offscreen
+                    compositingStrategy = if (notchAlpha > 0.01f && effectiveSlideProgress > 0.01f) CompositingStrategy.Offscreen else CompositingStrategy.Auto
                     val hidden = 1f - effectiveSlideProgress
                     val totalDistanceX = size.width + extraBezelDistancePx
                     val totalDistanceY = size.height + extraBezelDistancePx
@@ -980,7 +1075,8 @@ fun VolumeSliderHud(
                 0f,
                 minOf(pillW, pillSpan) * 0.5f
             )
-            val notchAlpha = (1f - floatProgress).coerceIn(0f, 1f)
+            val effectiveHousingColor = if (lightMode) Color.White else HudHousingBlack
+            val effectiveFillColor = if (lightMode) Color.Black else HudFillWhite
             val cutoutThicknessPx = cutoutThicknessDp.dp.toPx()
             val bezelPadPx = (HUD_CUTOUT_BEZEL_PAD_DP * (1f - floatProgress) + animatedInsetDp).dp.toPx()
             val innerPadPx = HUD_CUTOUT_INNER_PAD_DP.dp.toPx()
@@ -992,14 +1088,16 @@ fun VolumeSliderHud(
                 val bezelEdgeX = if (isRight) size.width else 0f
                 val inwardDir = if (isRight) -1f else 1f
 
-                val verticalPad = (size.height - pillSpan) * 0.5f
+                val outerSpanPx = outerSpanDp.dp.toPx()
+                val extraSpanPadPx = 30.dp.toPx()
+                val maxStretchExtra = if (stretchScaleMax > 1.001f) pillSpan * (stretchScaleMax - 1f) else 0f
+                val minStretchExtra = if (stretchScaleMin > 1.001f) pillSpan * (stretchScaleMin - 1f) else 0f
+
                 val pillCenterX = bezelEdgeX + inwardDir * (bezelPadPx + pillW * 0.5f)
                 val pillLeft = pillCenterX - pillW * 0.5f
                 val pillRight = pillCenterX + pillW * 0.5f
-                val basePillTop = verticalPad
-                val basePillBottom = verticalPad + pillSpan
-                val maxStretchExtra = if (stretchScaleMax > 1.001f) pillSpan * (stretchScaleMax - 1f) else 0f
-                val minStretchExtra = if (stretchScaleMin > 1.001f) pillSpan * (stretchScaleMin - 1f) else 0f
+                val basePillTop = extraSpanPadPx + pillStartOffsetPx
+                val basePillBottom = basePillTop + pillSpan
                 val pillTop = basePillTop - maxStretchExtra
                 val pillBottom = basePillBottom + minStretchExtra
 
@@ -1011,11 +1109,11 @@ fun VolumeSliderHud(
                     )
                 )
 
-                val housingTop = -maxStretchExtra
-                val housingHeight = size.height + maxStretchExtra + minStretchExtra
+                val housingTop = extraSpanPadPx - maxStretchExtra
+                val housingHeight = outerSpanPx + maxStretchExtra + minStretchExtra
 
                 if (notchAlpha > 0.01f) {
-                    val notchWidth = cutoutThicknessPx * (1f - floatProgress * 0.72f)
+                    val notchWidth = maxOf(cutoutThicknessPx, bezelPadPx + pillW + innerPadPx)
                     val notchLeft = if (isRight) bezelEdgeX - notchWidth else 0f
                     translate(left = notchLeft, top = housingTop) {
                         buildHudHousingPath(
@@ -1030,7 +1128,7 @@ fun VolumeSliderHud(
                         )
                         drawPath(
                             path = housingPath,
-                            color = HudHousingBlack.copy(alpha = notchAlpha)
+                            color = effectiveHousingColor.copy(alpha = notchAlpha)
                         )
                     }
                     drawPath(
@@ -1049,7 +1147,7 @@ fun VolumeSliderHud(
                 }
                 val fillAlpha = 1f
 
-                if (pillBlurDp > 0.5f) {
+                if (pillBlurDp > 0.5f && isVisible && effectiveSlideProgress > 0.95f) {
                     drawIntoCanvas { canvas ->
                         val blurPaint = android.graphics.Paint().apply {
                             isAntiAlias = true
@@ -1070,7 +1168,7 @@ fun VolumeSliderHud(
                 if (blurRadiusPx > 0 && !isRuntimeBlurActive) {
                     drawPath(
                         path = pillPath,
-                        color = Color.White.copy(alpha = 0.14f),
+                        color = if (lightMode) Color.Black.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.14f),
                         style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
                     )
                 }
@@ -1081,7 +1179,7 @@ fun VolumeSliderHud(
                 clipPath(pillPath) {
                     if (displayedFraction > 0.002f) {
                         drawRect(
-                            color = HudFillWhite.copy(alpha = fillAlpha),
+                            color = effectiveFillColor.copy(alpha = fillAlpha),
                             topLeft = Offset(pillLeft, fillTop),
                             size = Size(pillW, pillBottom - fillTop)
                         )
@@ -1093,16 +1191,15 @@ fun VolumeSliderHud(
                             y = pillBottom - minOf(pillW * 0.50f, 24.dp.toPx())
                         )
                         val counterSteps = if (isCall) {
-                            val minFine = 10
-                            (displayedFraction * maxVolumeLimit).roundToInt().coerceIn(minFine, maxVolumeLimit)
+                            (displayedFraction * maxVolumeLimit).roundToInt().coerceIn(callMinStep, maxVolumeLimit)
                         } else {
                             (displayedFraction * maxVolumeLimit).roundToInt().coerceIn(0, maxVolumeLimit)
                         }
                         val counterText = "$counterSteps"
                         val counterTextSize = (pillW * 0.32f).coerceIn(10.dp.toPx(), 13.dp.toPx())
                         val counterCenterY = pillTop + minOf(pillW * 0.45f, 18.dp.toPx())
-                        val speakerColorDark = (if (isBluetoothConnected) Color(0xFFFF453A) else HudIconOnDark).copy(alpha = iconAlpha)
-                        val speakerColorWhite = (if (isBluetoothConnected) Color(0xFFFF453A) else HudIconOnWhite).copy(alpha = iconAlpha)
+                        val speakerColorDark = (if (isBluetoothConnected) Color(0xFFFF453A) else (if (lightMode) Color(0xFF1C1C1E) else HudIconOnDark)).copy(alpha = iconAlpha)
+                        val speakerColorWhite = (if (isBluetoothConnected) Color(0xFFFF453A) else (if (lightMode) Color.White else HudIconOnWhite)).copy(alpha = iconAlpha)
                         if (fillTop > pillTop) {
                             clipRect(pillLeft, pillTop, pillRight, fillTop) {
                                 if (showVolumeCounter) {
@@ -1111,7 +1208,7 @@ fun VolumeSliderHud(
                                             isAntiAlias = true
                                             textAlign = android.graphics.Paint.Align.CENTER
                                             textSize = counterTextSize
-                                            color = HudIconOnDark.copy(alpha = iconAlpha).toArgb()
+                                            color = (if (lightMode) Color(0xFF1C1C1E) else HudIconOnDark).copy(alpha = iconAlpha).toArgb()
                                             typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                                         }
                                         val baseline = counterCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
@@ -1150,7 +1247,7 @@ fun VolumeSliderHud(
                                             isAntiAlias = true
                                             textAlign = android.graphics.Paint.Align.CENTER
                                             textSize = counterTextSize
-                                            color = HudIconOnWhite.copy(alpha = iconAlpha).toArgb()
+                                            color = (if (lightMode) Color.White else HudIconOnWhite).copy(alpha = iconAlpha).toArgb()
                                             typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                                         }
                                         val baseline = counterCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
@@ -1189,16 +1286,18 @@ fun VolumeSliderHud(
                 val bezelEdgeY = if (isTop) 0f else size.height
                 val inwardDir = if (isTop) 1f else -1f
 
-                val horizontalPad = (size.width - pillSpan) * 0.5f
+                val outerSpanPx = outerSpanDp.dp.toPx()
+                val extraSpanPadPx = 30.dp.toPx()
+                val maxStretchExtra = if (stretchScaleMax > 1.001f) pillSpan * (stretchScaleMax - 1f) else 0f
+                val minStretchExtra = if (stretchScaleMin > 1.001f) pillSpan * (stretchScaleMin - 1f) else 0f
+
                 val pillCenterY = bezelEdgeY + inwardDir * (bezelPadPx + pillW * 0.5f)
                 val pillTop = pillCenterY - pillW * 0.5f
                 val pillBottom = pillCenterY + pillW * 0.5f
-                val basePillLeft = horizontalPad
-                val basePillRight = horizontalPad + pillSpan
-                val maxStretchExtra = if (stretchScaleMax > 1.001f) pillSpan * (stretchScaleMax - 1f) else 0f
-                val minStretchExtra = if (stretchScaleMin > 1.001f) pillSpan * (stretchScaleMin - 1f) else 0f
-                val pillRight = basePillRight + maxStretchExtra
+                val basePillLeft = extraSpanPadPx + pillStartOffsetPx
+                val basePillRight = basePillLeft + pillSpan
                 val pillLeft = basePillLeft - minStretchExtra
+                val pillRight = basePillRight + maxStretchExtra
 
                 pillPath.reset()
                 pillPath.addRoundRect(
@@ -1208,11 +1307,11 @@ fun VolumeSliderHud(
                     )
                 )
 
-                val housingLeft = -minStretchExtra
-                val housingWidth = size.width + maxStretchExtra + minStretchExtra
+                val housingLeft = extraSpanPadPx - minStretchExtra
+                val housingWidth = outerSpanPx + maxStretchExtra + minStretchExtra
 
                 if (notchAlpha > 0.01f) {
-                    val notchHeight = cutoutThicknessPx * (1f - floatProgress * 0.72f)
+                    val notchHeight = maxOf(cutoutThicknessPx, bezelPadPx + pillW + innerPadPx)
                     val notchTop = if (isTop) 0f else bezelEdgeY - notchHeight
                     translate(left = housingLeft, top = notchTop) {
                         buildHudHousingPath(
@@ -1227,7 +1326,7 @@ fun VolumeSliderHud(
                         )
                         drawPath(
                             path = housingPath,
-                            color = HudHousingBlack.copy(alpha = notchAlpha)
+                            color = effectiveHousingColor.copy(alpha = notchAlpha)
                         )
                     }
                     drawPath(
@@ -1246,7 +1345,7 @@ fun VolumeSliderHud(
                 }
                 val fillAlpha = 1f
 
-                if (pillBlurDp > 0.5f) {
+                if (pillBlurDp > 0.5f && isVisible && effectiveSlideProgress > 0.95f) {
                     drawIntoCanvas { canvas ->
                         val blurPaint = android.graphics.Paint().apply {
                             isAntiAlias = true
@@ -1267,7 +1366,7 @@ fun VolumeSliderHud(
                 if (blurRadiusPx > 0 && !isRuntimeBlurActive) {
                     drawPath(
                         path = pillPath,
-                        color = Color.White.copy(alpha = 0.14f),
+                        color = if (lightMode) Color.Black.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.14f),
                         style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
                     )
                 }
@@ -1278,7 +1377,7 @@ fun VolumeSliderHud(
                 clipPath(pillPath) {
                     if (displayedFraction > 0.002f) {
                         drawRect(
-                            color = HudFillWhite.copy(alpha = fillAlpha),
+                            color = effectiveFillColor.copy(alpha = fillAlpha),
                             topLeft = Offset(pillLeft, pillTop),
                             size = Size(fillRight - pillLeft, pillW)
                         )
@@ -1290,16 +1389,15 @@ fun VolumeSliderHud(
                             y = pillCenterY
                         )
                         val counterSteps = if (isCall) {
-                            val minFine = 10
-                            (displayedFraction * maxVolumeLimit).roundToInt().coerceIn(minFine, maxVolumeLimit)
+                            (displayedFraction * maxVolumeLimit).roundToInt().coerceIn(callMinStep, maxVolumeLimit)
                         } else {
                             (displayedFraction * maxVolumeLimit).roundToInt().coerceIn(0, maxVolumeLimit)
                         }
                         val counterText = "$counterSteps"
                         val counterTextSize = (pillW * 0.32f).coerceIn(10.dp.toPx(), 13.dp.toPx())
                         val counterCenterX = pillRight - minOf(pillW * 0.45f, 18.dp.toPx())
-                        val speakerColorDark = (if (isBluetoothConnected) Color(0xFFFF453A) else HudIconOnDark).copy(alpha = iconAlpha)
-                        val speakerColorWhite = (if (isBluetoothConnected) Color(0xFFFF453A) else HudIconOnWhite).copy(alpha = iconAlpha)
+                        val speakerColorDark = (if (isBluetoothConnected) Color(0xFFFF453A) else (if (lightMode) Color(0xFF1C1C1E) else HudIconOnDark)).copy(alpha = iconAlpha)
+                        val speakerColorWhite = (if (isBluetoothConnected) Color(0xFFFF453A) else (if (lightMode) Color.White else HudIconOnWhite)).copy(alpha = iconAlpha)
                         if (fillRight > pillLeft) {
                             clipRect(pillLeft, pillTop, fillRight, pillBottom) {
                                 if (showVolumeCounter) {
@@ -1308,7 +1406,7 @@ fun VolumeSliderHud(
                                             isAntiAlias = true
                                             textAlign = android.graphics.Paint.Align.CENTER
                                             textSize = counterTextSize
-                                            color = HudIconOnWhite.copy(alpha = iconAlpha).toArgb()
+                                            color = (if (lightMode) Color.White else HudIconOnWhite).copy(alpha = iconAlpha).toArgb()
                                             typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                                         }
                                         val baseline = pillCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
@@ -1347,7 +1445,7 @@ fun VolumeSliderHud(
                                             isAntiAlias = true
                                             textAlign = android.graphics.Paint.Align.CENTER
                                             textSize = counterTextSize
-                                            color = HudIconOnDark.copy(alpha = iconAlpha).toArgb()
+                                            color = (if (lightMode) Color(0xFF1C1C1E) else HudIconOnDark).copy(alpha = iconAlpha).toArgb()
                                             typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                                         }
                                         val baseline = pillCenterY - (textPaint.descent() + textPaint.ascent()) / 2f

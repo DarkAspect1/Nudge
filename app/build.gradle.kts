@@ -20,8 +20,8 @@ android {
         applicationId = "com.nudge.edge"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "2.6.0"
+        versionCode = 7
+        versionName = "2.6.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

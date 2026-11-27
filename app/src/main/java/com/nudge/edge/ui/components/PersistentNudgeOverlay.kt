@@ -36,6 +36,7 @@ fun PersistentNudgesCanvasOverlay(
     displayRotation: Int = Surface.ROTATION_0,
     pullDistances: Map<String, Float> = emptyMap(),
     hiddenNudgeId: String? = null,
+    hiddenNudgeIds: Set<String> = emptySet(),
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
@@ -46,6 +47,7 @@ fun PersistentNudgesCanvasOverlay(
             if (!nudge.enabled) continue
             if (isLandscape && !nudge.displayOnLandscape) continue
             if (hiddenNudgeId != null && nudge.id == hiddenNudgeId) continue
+            if (hiddenNudgeIds.contains(nudge.id)) continue
 
             val portraitSide = if (nudge.edge == ScreenEdge.LEFT) EdgeSide.LEFT else EdgeSide.RIGHT
             val physicalEdge = EdgeOrientationMapper.resolvePhysicalEdge(portraitSide, displayRotation)
